@@ -67,17 +67,26 @@ function mediaUrlOk(url){try{if(String(url).startsWith('/uploads/'))return true;
 function blobMediaFromBody(body,kind){
   const supplied=clean(body?.mediaUrl,2000);
   const origin=clean(body?.mediaOrigin,300);
-  const pathname=clean(body?.mediaPath,1000).replace(/^\//,'');
-  if(pathname&&origin){
+  const suppliedPath=clean(body?.mediaPath,1000).replace(/^\/+/,'');
+
+  const candidates=[];
+  if(suppliedPath&&origin)candidates.push(origin.replace(/\\/+$/,'')+'/'+suppliedPath);
+  if(supplied)candidates.push(supplied);
+
+  for(const candidate of candidates){
     try{
-      const u=new URL(origin);
-      const validHost=u.hostname==='blob.vercel-storage.com'||/\.blob\.vercel-storage\.com$/i.test(u.hostname);
-      if(u.protocol!=='https:'||!validHost)return '';
-      if(!pathname.startsWith(kind+'/'))return '';
+      const u=new URL(candidate);
+      const validHost=u.hostname==='blob.vercel-storage.com'||/\\.blob\\.vercel-storage\\.com$/i.test(u.hostname);
+      if(u.protocol!=='https:'||!validHost)continue;
+
+      const pathname=decodeURIComponent(u.pathname.replace(/^\\/+/, ''));
+      if(!pathname.startsWith(kind+'/'))continue;
+
       return u.origin+'/'+pathname.split('/').map(encodeURIComponent).join('/');
-    }catch{return '';}
+    }catch{}
   }
-  return supplied&&mediaUrlOk(supplied)?supplied:'';
+
+  return '';
 }
 
 async function browserMediaUrl(url){
@@ -198,7 +207,19 @@ app.post('/api/blob/upload-url',auth,csrfGuard,async(req,res)=>{try{
 app.post('/api/blob/upload',async(req,res)=>{try{const s=session(cookies(req.headers.cookie||'').efasa_admin);if(!s)return res.status(401).json({error:'Unauthorized'});const body=req.body&&typeof req.body==='object'?req.body:null;if(!body||typeof body.type!=='string'||!body.payload)throw new Error('Payload upload Blob tidak valid.');const uploadOptions={body,request:req,...(process.env.BLOB_READ_WRITE_TOKEN?{token:process.env.BLOB_READ_WRITE_TOKEN}:{}),onBeforeGenerateToken:async(_p,payloadRaw)=>{let p={};try{p=payloadRaw?JSON.parse(payloadRaw):{};}catch{throw new Error('Payload upload tidak valid.');}const kind=p.kind;if(!['logo','portfolio','stock'].includes(kind))throw new Error('Jenis upload tidak valid.');return{allowedContentTypes:kind==='logo'?['image/jpeg','image/png','image/webp']:Array.from(MIME),maximumSizeInBytes:kind==='logo'?5*1024*1024:100*1024*1024,addRandomSuffix:true,tokenPayload:JSON.stringify({kind,adminId:s.sub})};},onUploadCompleted:async()=>{}};const out=await handleUpload(uploadOptions);return res.status(200).json(out);}catch(e){console.error('Blob client upload:',e.message);return res.status(400).json({error:e.message||'Gagal membuat token upload.'});}});
 
 function localMedia(req){return req.file?`/uploads/${req.file.filename}`:'';}
-async function saveItem(type,req,res){try{const media=STORAGE_MODE==='local'?localMedia(req):blobMediaFromBody(req.body,type);if(!media)return res.status(400).json({ok:false,message:'Media Blob tidak valid. Upload ulang file dari dashboard.'});const x={id:id(),itemType:type,title:clean(req.body.title||'',140),location:clean(req.body.location,120),service:clean(req.body.service||'',120),name:clean(req.body.name||'',140),brand:clean(req.body.brand,80),capacity:clean(req.body.capacity,60),price:clean(req.body.price,80),description:clean(req.body.description,1200),media,mediaType:req.body.mediaType==='video'?'video':(req.file&&req.file.mimetype.startsWith('video/')?'video':'image'),createdAt:now()};if(type==='portfolio'&&!x.title)x.title='Dokumentasi pekerjaan EFASA TEKNIK';if(type==='stock'&&!x.name)x.name='Unit AC';await insertMedia(x);res.json({ok:true,item:x});}catch(e){if(req.file?.path&&fs.existsSync(req.file.path))fs.unlinkSync(req.file.path);res.status(500).json({ok:false,message:e.message});}}
+async function saveItem(type,req,res){
+  try{
+    const media=STORAGE_MODE==='local'?localMedia(req):blobMediaFromBody(req.body,type);
+    if(!media){
+      console.warn('Invalid Blob media payload:',{
+        type,
+        mediaUrl:String(req.body?.mediaUrl||''),
+        mediaOrigin:String(req.body?.mediaOrigin||''),
+        mediaPath:String(req.body?.mediaPath||''),
+        mediaType:String(req.body?.mediaType||'')
+      });
+      return res.status(400).json({ok:false,message:'Media Blob tidak valid. Upload ulang file dari dashboard.'});
+    }const x={id:id(),itemType:type,title:clean(req.body.title||'',140),location:clean(req.body.location,120),service:clean(req.body.service||'',120),name:clean(req.body.name||'',140),brand:clean(req.body.brand,80),capacity:clean(req.body.capacity,60),price:clean(req.body.price,80),description:clean(req.body.description,1200),media,mediaType:req.body.mediaType==='video'?'video':(req.file&&req.file.mimetype.startsWith('video/')?'video':'image'),createdAt:now()};if(type==='portfolio'&&!x.title)x.title='Dokumentasi pekerjaan EFASA TEKNIK';if(type==='stock'&&!x.name)x.name='Unit AC';await insertMedia(x);res.json({ok:true,item:x});}catch(e){if(req.file?.path&&fs.existsSync(req.file.path))fs.unlinkSync(req.file.path);res.status(500).json({ok:false,message:e.message});}}
 app.post('/api/admin/portfolio',auth,csrfGuard,localUpload.single('media'),(req,res)=>saveItem('portfolio',req,res));
 app.post('/api/admin/stock',auth,csrfGuard,localUpload.single('media'),(req,res)=>saveItem('stock',req,res));
 app.post('/api/admin/logo',auth,csrfGuard,logoUpload.single('media'),async(req,res)=>{
