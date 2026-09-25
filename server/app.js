@@ -58,7 +58,7 @@ function clear(res,n,httpOnly){cookie(res,n,'',{httpOnly,sameSite:'Lax',maxAge:0
 function csrf(req,res){const c=cookies(req.headers.cookie||'');if(c.efasa_csrf)return c.efasa_csrf;const t=crypto.randomBytes(24).toString('hex');cookie(res,'efasa_csrf',t,{sameSite:'Lax',maxAge:86400});return t;}
 function auth(req,res,next){const s=session(cookies(req.headers.cookie||'').efasa_admin);if(!s)return res.status(401).json({ok:false,message:'Unauthorized'});req.adminId=s.sub;next();}
 function csrfGuard(req,res,next){const c=cookies(req.headers.cookie||'');if(!c.efasa_csrf||c.efasa_csrf!==req.headers['x-efasa-csrf'])return res.status(403).json({ok:false,message:'CSRF token tidak valid. Muat ulang dashboard.'});next();}
-function mediaUrlOk(url){try{if(String(url).startsWith('/uploads/'))return true;const u=new URL(url);return u.protocol==='https:'&&/\.blob\.vercel-storage\.com$/i.test(u.hostname);}catch{return false;}}
+function mediaUrlOk(url){try{if(String(url).startsWith('/uploads/'))return true;const u=new URL(url);return u.protocol==='https:'&&(u.hostname==='blob.vercel-storage.com'||/\.blob\.vercel-storage\.com$/i.test(u.hostname));}catch{return false;}}
 
 async function browserMediaUrl(url){
   const value=String(url||'');
@@ -66,7 +66,7 @@ async function browserMediaUrl(url){
   if(value.startsWith('/uploads/'))return value;
   try{
     const u=new URL(value);
-    if(u.protocol!=='https:'||!/\.blob\.vercel-storage\.com$/i.test(u.hostname))return '';
+    if(u.protocol!=='https:'||(u.hostname!=='blob.vercel-storage.com'&&!/\.blob\.vercel-storage\.com$/i.test(u.hostname)))return '';
     const pathname=decodeURIComponent(u.pathname.replace(/^\//,''));
     if(!pathname)return '';
     const validUntil=Date.now()+60*60*1000;
