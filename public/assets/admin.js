@@ -43,7 +43,7 @@ async function uploadBlob(file,kind,progressId){
     xhr.onabort=function(){reject(new Error('Upload dibatalkan.'));};
     xhr.send(file);
   });
-  return {mediaUrl:info.mediaUrl,mediaOrigin:info.mediaOrigin,mediaPath:info.mediaPath,mediaType:info.mediaType};
+  return {mediaPath:info.mediaPath,mediaType:info.mediaType};
 }
 
 async function refresh(){
