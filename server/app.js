@@ -96,8 +96,10 @@ app.post('/api/blob/upload-url',auth,csrfGuard,async(req,res)=>{try{
   const safeName=path.basename(fileName).replace(/[^a-zA-Z0-9._-]+/g,'-').replace(/^-+|-+$/g,'')||'file';
   const pathname=kind+'/'+Date.now()+'-'+crypto.randomBytes(8).toString('hex')+'-'+safeName;
   const requestOidcToken=clean(req.headers['x-vercel-oidc-token'],5000)||clean(process.env.VERCEL_OIDC_TOKEN,5000);
-  if(!requestOidcToken){
-    throw new Error('Vercel OIDC token tidak tersedia di Function. Pastikan Secure Backend Access / OIDC aktif pada project Vercel dan Blob store sudah terhubung ke project ini.');
+  const storeId=String(process.env.BLOB_STORE_ID||'').replace(/^store_/,'');
+  if(!storeId)throw new Error('BLOB_STORE_ID tidak tersedia. Pastikan Blob store terhubung ke project Vercel.');
+  if(!requestOidcToken&&!process.env.BLOB_READ_WRITE_TOKEN){
+    throw new Error('Credential Vercel Blob tidak tersedia. Pastikan BLOB_READ_WRITE_TOKEN tersedia atau OIDC Vercel aktif pada deployment.');
   }
   const token=await issueSignedToken({
     pathname,
@@ -106,11 +108,10 @@ app.post('/api/blob/upload-url',auth,csrfGuard,async(req,res)=>{try{
     maximumSizeInBytes:kind==='logo'?5*1024*1024:100*1024*1024,
     validUntil:Date.now()+15*60*1000,
     oidcToken:requestOidcToken,
-    storeId
+    storeId,
+    token:process.env.BLOB_READ_WRITE_TOKEN
   });
   const signed=await presignUrl(token,{pathname,operation:'put',validUntil:Date.now()+15*60*1000});
-  const storeId=String(process.env.BLOB_STORE_ID||'').replace(/^store_/,'');
-  if(!storeId)throw new Error('BLOB_STORE_ID tidak tersedia. Pastikan Blob store terhubung ke project Vercel.');
   const mediaUrl='https://'+storeId+'.public.blob.vercel-storage.com/'+pathname.split('/').map(encodeURIComponent).join('/');
   res.json({ok:true,presignedUrl:signed.presignedUrl,mediaUrl,mediaType:contentType.startsWith('video/')?'video':'image'});
 }catch(e){console.error('Blob presign upload:',e);res.status(400).json({ok:false,message:e.message||'Gagal membuat URL upload Blob.'});}});
