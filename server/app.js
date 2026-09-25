@@ -167,9 +167,14 @@ app.post('/api/admin/logo',auth,csrfGuard,localUpload.single('media'),async(req,
   const media=STORAGE_MODE==='local'?localMedia(req):blobMediaFromBody(req.body,'logo');
   const mediaType=String(req.body?.mediaType||'').toLowerCase();
   const mediaPath=String(req.body?.mediaPath||'');
-  const isBlobLogo=STORAGE_MODE!=='local'&&media&&mediaPath.startsWith('logo/');
-  const isLocalLogo=STORAGE_MODE==='local'&&media;
-  if(!(isBlobLogo||isLocalLogo)||(!isBlobLogo&&mediaType!=='image'))return res.status(400).json({ok:false,message:'Logo gagal diproses. Silakan upload ulang gambar JPG/PNG/WebP.'});const st=await settings();if(st.logo)await removeFile(st.logo);if(!USE_POSTGRES){const d=dbRead();d.settings={...DEFAULT_SETTINGS,...(d.settings||{}),logo:media};dbWrite(d);}else{await ready();await sql`INSERT INTO settings(key,value) VALUES('logo',${media}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;}res.json({ok:true,logo:media});}catch(e){if(req.file?.path&&fs.existsSync(req.file.path))fs.unlinkSync(req.file.path);res.status(500).json({ok:false,message:e.message});}});
+  let urlPath='';
+  if(media&&media.startsWith('https://')){
+    try{urlPath=decodeURIComponent(new URL(media).pathname.replace(/^\//,''));}catch{}
+  }
+  const isBlobLogo=STORAGE_MODE!=='local'&&media&&(mediaPath.startsWith('logo/')||urlPath.startsWith('logo/'));
+  const isLocalLogo=STORAGE_MODE==='local'&&Boolean(media);
+  if(!(isBlobLogo||isLocalLogo))return res.status(400).json({ok:false,message:'Logo gagal diproses. Upload selesai tetapi URL Blob tidak terbaca.'});
+  if(STORAGE_MODE==='local'&&mediaType&&mediaType!=='image')return res.status(400).json({ok:false,message:'Format logo tidak didukung.'});const st=await settings();if(st.logo)await removeFile(st.logo);if(!USE_POSTGRES){const d=dbRead();d.settings={...DEFAULT_SETTINGS,...(d.settings||{}),logo:media};dbWrite(d);}else{await ready();await sql`INSERT INTO settings(key,value) VALUES('logo',${media}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;}res.json({ok:true,logo:media});}catch(e){if(req.file?.path&&fs.existsSync(req.file.path))fs.unlinkSync(req.file.path);res.status(500).json({ok:false,message:e.message});}});
 
 async function delItem(type,req,res){try{const x=await removeMedia(type,req.params.id);if(!x)return res.status(404).json({ok:false,message:'Data tidak ditemukan.'});await removeFile(x.media_url||x.media);res.json({ok:true});}catch(e){res.status(500).json({ok:false,message:e.message});}}
 app.delete('/api/admin/portfolio/:id',auth,csrfGuard,(req,res)=>delItem('portfolio',req,res));
