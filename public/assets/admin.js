@@ -109,11 +109,8 @@ $('#logoForm').addEventListener('submit',async function(event){
   event.preventDefault();
   try{
     var file=event.target.querySelector('input[type="file"]').files[0];if(!file) throw new Error('Pilih logo terlebih dahulu.');
-    var response;
-    if(storageMode==='vercel-blob'){
-      var media=await uploadBlob(file,'logo','logoProgress');
-      response=await api('/api/admin/logo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(media)});
-    }else response=await api('/api/admin/logo',{method:'POST',body:new FormData(event.target)});
+    setProgress('logoProgress','Mengupload...');
+    var response=await api('/api/admin/logo',{method:'POST',body:new FormData(event.target)});
     setProgress('logoProgress',response.ok?'Logo berhasil diperbarui.':'');
     event.target.reset();
   }catch(e){setProgress('logoProgress',e.message);}
