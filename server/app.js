@@ -66,8 +66,8 @@ function blobMediaFromBody(body,kind){
   if(pathname&&origin){
     try{
       const u=new URL(origin);
-      if(u.protocol!=='https:'||!/\.blob\.vercel-storage\.com$/i.test(u.hostname))return '';
-      const normalized=kind+'/'+pathname.split('/').slice(1).join('/');
+      const validHost=u.hostname==='blob.vercel-storage.com'||/\.blob\.vercel-storage\.com$/i.test(u.hostname);
+      if(u.protocol!=='https:'||!validHost)return '';
       if(!pathname.startsWith(kind+'/'))return '';
       return u.origin+'/'+pathname.split('/').map(encodeURIComponent).join('/');
     }catch{return '';}
