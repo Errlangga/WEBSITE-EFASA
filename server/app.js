@@ -59,6 +59,21 @@ function csrf(req,res){const c=cookies(req.headers.cookie||'');if(c.efasa_csrf)r
 function auth(req,res,next){const s=session(cookies(req.headers.cookie||'').efasa_admin);if(!s)return res.status(401).json({ok:false,message:'Unauthorized'});req.adminId=s.sub;next();}
 function csrfGuard(req,res,next){const c=cookies(req.headers.cookie||'');if(!c.efasa_csrf||c.efasa_csrf!==req.headers['x-efasa-csrf'])return res.status(403).json({ok:false,message:'CSRF token tidak valid. Muat ulang dashboard.'});next();}
 function mediaUrlOk(url){try{if(String(url).startsWith('/uploads/'))return true;const u=new URL(url);return u.protocol==='https:'&&(u.hostname==='blob.vercel-storage.com'||/\.blob\.vercel-storage\.com$/i.test(u.hostname));}catch{return false;}}
+function blobMediaFromBody(body,kind){
+  const supplied=clean(body?.mediaUrl,2000);
+  const origin=clean(body?.mediaOrigin,300);
+  const pathname=clean(body?.mediaPath,1000).replace(/^\//,'');
+  if(pathname&&origin){
+    try{
+      const u=new URL(origin);
+      if(u.protocol!=='https:'||!/\.blob\.vercel-storage\.com$/i.test(u.hostname))return '';
+      const normalized=kind+'/'+pathname.split('/').slice(1).join('/');
+      if(!pathname.startsWith(kind+'/'))return '';
+      return u.origin+'/'+pathname.split('/').map(encodeURIComponent).join('/');
+    }catch{return '';}
+  }
+  return supplied&&mediaUrlOk(supplied)?supplied:'';
+}
 
 async function browserMediaUrl(url){
   const value=String(url||'');
@@ -137,17 +152,18 @@ app.post('/api/blob/upload-url',auth,csrfGuard,async(req,res)=>{try{
   const storeId=String(process.env.BLOB_STORE_ID||'').replace(/^store_/,'').trim();
   if(!storeId)throw new Error('BLOB_STORE_ID tidak tersedia. Pastikan Blob store terhubung ke project Vercel.');
   const signedBlobUrl=new URL(signed.presignedUrl);
+  const mediaOrigin=signedBlobUrl.origin;
   signedBlobUrl.search='';
   const mediaUrl=signedBlobUrl.toString();
-  res.json({ok:true,presignedUrl:signed.presignedUrl,mediaUrl,mediaType:contentType.startsWith('video/')?'video':'image'});
+  res.json({ok:true,presignedUrl:signed.presignedUrl,mediaUrl,mediaOrigin,mediaPath:pathname,mediaType:contentType.startsWith('video/')?'video':'image'});
 }catch(e){console.error('Blob presign upload:',e);res.status(400).json({ok:false,message:e.message||'Gagal membuat URL upload Blob.'});}});
 app.post('/api/blob/upload',async(req,res)=>{try{const s=session(cookies(req.headers.cookie||'').efasa_admin);if(!s)return res.status(401).json({error:'Unauthorized'});const body=req.body&&typeof req.body==='object'?req.body:null;if(!body||typeof body.type!=='string'||!body.payload)throw new Error('Payload upload Blob tidak valid.');const uploadOptions={body,request:req,...(process.env.BLOB_READ_WRITE_TOKEN?{token:process.env.BLOB_READ_WRITE_TOKEN}:{}),onBeforeGenerateToken:async(_p,payloadRaw)=>{let p={};try{p=payloadRaw?JSON.parse(payloadRaw):{};}catch{throw new Error('Payload upload tidak valid.');}const kind=p.kind;if(!['logo','portfolio','stock'].includes(kind))throw new Error('Jenis upload tidak valid.');return{allowedContentTypes:kind==='logo'?['image/jpeg','image/png','image/webp']:Array.from(MIME),maximumSizeInBytes:kind==='logo'?5*1024*1024:100*1024*1024,addRandomSuffix:true,tokenPayload:JSON.stringify({kind,adminId:s.sub})};},onUploadCompleted:async()=>{}};const out=await handleUpload(uploadOptions);return res.status(200).json(out);}catch(e){console.error('Blob client upload:',e.message);return res.status(400).json({error:e.message||'Gagal membuat token upload.'});}});
 
 function localMedia(req){return req.file?`/uploads/${req.file.filename}`:'';}
-async function saveItem(type,req,res){try{const media=STORAGE_MODE==='local'?localMedia(req):clean(req.body.mediaUrl,1200);if(!media||!mediaUrlOk(media))return res.status(400).json({ok:false,message:'Media wajib valid.'});const x={id:id(),itemType:type,title:clean(req.body.title||'',140),location:clean(req.body.location,120),service:clean(req.body.service||'',120),name:clean(req.body.name||'',140),brand:clean(req.body.brand,80),capacity:clean(req.body.capacity,60),price:clean(req.body.price,80),description:clean(req.body.description,1200),media,mediaType:req.body.mediaType==='video'?'video':(req.file&&req.file.mimetype.startsWith('video/')?'video':'image'),createdAt:now()};if(type==='portfolio'&&!x.title)x.title='Dokumentasi pekerjaan EFASA TEKNIK';if(type==='stock'&&!x.name)x.name='Unit AC';await insertMedia(x);res.json({ok:true,item:x});}catch(e){if(req.file?.path&&fs.existsSync(req.file.path))fs.unlinkSync(req.file.path);res.status(500).json({ok:false,message:e.message});}}
+async function saveItem(type,req,res){try{const media=STORAGE_MODE==='local'?localMedia(req):blobMediaFromBody(req.body,type);if(!media)return res.status(400).json({ok:false,message:'Media Blob tidak valid. Upload ulang file dari dashboard.'});const x={id:id(),itemType:type,title:clean(req.body.title||'',140),location:clean(req.body.location,120),service:clean(req.body.service||'',120),name:clean(req.body.name||'',140),brand:clean(req.body.brand,80),capacity:clean(req.body.capacity,60),price:clean(req.body.price,80),description:clean(req.body.description,1200),media,mediaType:req.body.mediaType==='video'?'video':(req.file&&req.file.mimetype.startsWith('video/')?'video':'image'),createdAt:now()};if(type==='portfolio'&&!x.title)x.title='Dokumentasi pekerjaan EFASA TEKNIK';if(type==='stock'&&!x.name)x.name='Unit AC';await insertMedia(x);res.json({ok:true,item:x});}catch(e){if(req.file?.path&&fs.existsSync(req.file.path))fs.unlinkSync(req.file.path);res.status(500).json({ok:false,message:e.message});}}
 app.post('/api/admin/portfolio',auth,csrfGuard,localUpload.single('media'),(req,res)=>saveItem('portfolio',req,res));
 app.post('/api/admin/stock',auth,csrfGuard,localUpload.single('media'),(req,res)=>saveItem('stock',req,res));
-app.post('/api/admin/logo',auth,csrfGuard,localUpload.single('media'),async(req,res)=>{try{const media=STORAGE_MODE==='local'?localMedia(req):clean(req.body.mediaUrl,1200);if(!media||!mediaUrlOk(media)||(STORAGE_MODE!=='local'&&req.body.mediaType!=='image'))return res.status(400).json({ok:false,message:'Logo tidak valid.'});const st=await settings();if(st.logo)await removeFile(st.logo);if(!USE_POSTGRES){const d=dbRead();d.settings={...DEFAULT_SETTINGS,...(d.settings||{}),logo:media};dbWrite(d);}else{await ready();await sql`INSERT INTO settings(key,value) VALUES('logo',${media}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;}res.json({ok:true,logo:media});}catch(e){if(req.file?.path&&fs.existsSync(req.file.path))fs.unlinkSync(req.file.path);res.status(500).json({ok:false,message:e.message});}});
+app.post('/api/admin/logo',auth,csrfGuard,localUpload.single('media'),async(req,res)=>{try{const media=STORAGE_MODE==='local'?localMedia(req):blobMediaFromBody(req.body,'logo');if(!media||(!req.body?.mediaType||req.body.mediaType!=='image'))return res.status(400).json({ok:false,message:'Logo tidak valid. Upload ulang JPG/PNG/WebP.'});const st=await settings();if(st.logo)await removeFile(st.logo);if(!USE_POSTGRES){const d=dbRead();d.settings={...DEFAULT_SETTINGS,...(d.settings||{}),logo:media};dbWrite(d);}else{await ready();await sql`INSERT INTO settings(key,value) VALUES('logo',${media}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;}res.json({ok:true,logo:media});}catch(e){if(req.file?.path&&fs.existsSync(req.file.path))fs.unlinkSync(req.file.path);res.status(500).json({ok:false,message:e.message});}});
 
 async function delItem(type,req,res){try{const x=await removeMedia(type,req.params.id);if(!x)return res.status(404).json({ok:false,message:'Data tidak ditemukan.'});await removeFile(x.media_url||x.media);res.json({ok:true});}catch(e){res.status(500).json({ok:false,message:e.message});}}
 app.delete('/api/admin/portfolio/:id',auth,csrfGuard,(req,res)=>delItem('portfolio',req,res));
