@@ -93,23 +93,19 @@ app.post('/api/blob/upload-url',auth,csrfGuard,async(req,res)=>{try{
     if(!MIME.has(contentType))return res.status(400).json({ok:false,message:'Tipe file tidak didukung.'});
     if(size>100*1024*1024)return res.status(400).json({ok:false,message:'Ukuran file maksimal 100 MB.'});
   }
+  const blobToken=String(process.env.BLOB_READ_WRITE_TOKEN||'').trim();
+  if(!blobToken)throw new Error('BLOB_READ_WRITE_TOKEN belum tersedia di Vercel. Tambahkan Read-Write Token dari Blob Store ke Environment Variables project.');
+  const storeId=String(process.env.BLOB_STORE_ID||'').replace(/^store_/,'').trim()||blobToken.split('_')[3];
+  if(!storeId)throw new Error('BLOB_STORE_ID tidak tersedia dan tidak bisa dibaca dari Blob token.');
   const safeName=path.basename(fileName).replace(/[^a-zA-Z0-9._-]+/g,'-').replace(/^-+|-+$/g,'')||'file';
   const pathname=kind+'/'+Date.now()+'-'+crypto.randomBytes(8).toString('hex')+'-'+safeName;
-  const requestOidcToken=clean(req.headers['x-vercel-oidc-token'],5000)||clean(process.env.VERCEL_OIDC_TOKEN,5000);
-  const storeId=String(process.env.BLOB_STORE_ID||'').replace(/^store_/,'');
-  if(!storeId)throw new Error('BLOB_STORE_ID tidak tersedia. Pastikan Blob store terhubung ke project Vercel.');
-  if(!requestOidcToken&&!process.env.BLOB_READ_WRITE_TOKEN){
-    throw new Error('Credential Vercel Blob tidak tersedia. Pastikan BLOB_READ_WRITE_TOKEN tersedia atau OIDC Vercel aktif pada deployment.');
-  }
   const token=await issueSignedToken({
     pathname,
     operations:['put'],
     allowedContentTypes:[contentType],
     maximumSizeInBytes:kind==='logo'?5*1024*1024:100*1024*1024,
     validUntil:Date.now()+15*60*1000,
-    oidcToken:requestOidcToken,
-    storeId,
-    token:process.env.BLOB_READ_WRITE_TOKEN
+    token:blobToken
   });
   const signed=await presignUrl(token,{pathname,operation:'put',validUntil:Date.now()+15*60*1000});
   const mediaUrl='https://'+storeId+'.public.blob.vercel-storage.com/'+pathname.split('/').map(encodeURIComponent).join('/');
