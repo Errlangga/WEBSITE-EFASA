@@ -227,7 +227,8 @@ app.post('/api/blob/upload',async(req,res)=>{try{const s=session(cookies(req.hea
 
 function localMedia(req){return req.file?`/uploads/${req.file.filename}`:'';}
 async function saveItem(type,req,res){
-  let blobPath=clean(req.body?.mediaPath,1000);\n  while(blobPath.startsWith('/'))blobPath=blobPath.slice(1);
+  let blobPath=clean(req.body?.mediaPath,1000);
+  while(blobPath.startsWith('/'))blobPath=blobPath.slice(1);
 
   try{
     const media=STORAGE_MODE==='local'
