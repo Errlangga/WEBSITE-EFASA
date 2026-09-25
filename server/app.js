@@ -121,7 +121,7 @@ async function removeFile(url){
       let target=url;
       if(url.startsWith('/api/media?path=')){
         const q=new URL(url,'https://efasa.local').searchParams.get('path')||'';
-        if(!/^(logo|portfolio|stock)\\//.test(q))return;
+        if(!/^(logo|portfolio|stock)\//.test(q))return;
         target=q;
       }
       await del(target,{access:'private'});
@@ -227,7 +227,7 @@ app.post('/api/blob/upload',async(req,res)=>{try{const s=session(cookies(req.hea
 
 function localMedia(req){return req.file?`/uploads/${req.file.filename}`:'';}
 async function saveItem(type,req,res){
-  const blobPath=clean(req.body?.mediaPath,1000).replace(/^\\/+/,'');
+  let blobPath=clean(req.body?.mediaPath,1000);\n  while(blobPath.startsWith('/'))blobPath=blobPath.slice(1);
 
   try{
     const media=STORAGE_MODE==='local'
