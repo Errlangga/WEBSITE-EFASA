@@ -86,18 +86,17 @@ async function browserMediaUrl(url){
   if(value.startsWith('/uploads/'))return value;
   try{
     const u=new URL(value);
-    if(u.protocol!=='https:'||(u.hostname!=='blob.vercel-storage.com'&&!/\.blob\.vercel-storage\.com$/i.test(u.hostname)))return '';
+    const validHost=u.protocol==='https:'&&(u.hostname==='blob.vercel-storage.com'||/\.blob\.vercel-storage\.com$/i.test(u.hostname));
+    if(!validHost)return '';
     const pathname=decodeURIComponent(u.pathname.replace(/^\//,''));
-    if(!pathname)return '';
-    const validUntil=Date.now()+60*60*1000;
-    const signedToken=await issueSignedToken({pathname,operations:['get'],validUntil});
-    const signed=await presignUrl(signedToken,{pathname,operation:'get',validUntil});
-    return signed.presignedUrl;
+    if(!/^(logo|portfolio|stock)\//.test(pathname))return '';
+    return '/api/media?path='+encodeURIComponent(pathname);
   }catch(e){
-    console.error('Blob read URL:',e.message);
+    console.error('Blob media URL:',e.message);
     return '';
   }
 }
+
 async function ready(){if(!USE_POSTGRES)return;if(!schemaReady){schemaReady=(async()=>{await sql`CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)`;await sql`CREATE TABLE IF NOT EXISTS admins(id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;await sql`CREATE TABLE IF NOT EXISTS media_items(id TEXT PRIMARY KEY,item_type TEXT NOT NULL CHECK(item_type IN ('portfolio','stock')),title TEXT,location TEXT,service TEXT,name TEXT,brand TEXT,capacity TEXT,price TEXT,description TEXT,media_url TEXT NOT NULL,media_type TEXT NOT NULL CHECK(media_type IN ('image','video')),created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;await sql`CREATE INDEX IF NOT EXISTS media_items_type_idx ON media_items(item_type,created_at DESC)`;for(const [k,v] of Object.entries(DEFAULT_SETTINGS))await sql`INSERT INTO settings(key,value) VALUES(${k},${v}) ON CONFLICT(key) DO NOTHING`;})().catch(e=>{schemaReady=null;throw e;});}await schemaReady;}
 async function settings(){requirePersistence();if(!USE_POSTGRES){const d=dbRead();d.settings={...DEFAULT_SETTINGS,...(d.settings||{})};dbWrite(d);return d.settings;}await ready();const r=await sql`SELECT key,value FROM settings`;return r.reduce((a,x)=>(a[x.key]=x.value,a),{...DEFAULT_SETTINGS});}
 async function adminById(idv){requirePersistence();if(!USE_POSTGRES)return dbRead().admin?.id===idv?dbRead().admin:null;await ready();const r=await sql`SELECT id,username,password_hash,created_at FROM admins WHERE id=${idv} LIMIT 1`;return r[0]||null;}
@@ -110,6 +109,37 @@ async function removeFile(url){if(!url)return;if(url.startsWith('/uploads/')){co
 app.use(express.json({limit:'300kb'}));
 app.use(express.urlencoded({extended:true,limit:'300kb'}));
 app.use(express.static(PUBLIC,{extensions:['html']}));
+
+app.get('/api/media',async(req,res)=>{
+  try{
+    const pathname=clean(req.query?.path,1000).replace(/^\//,'');
+    if(!/^(logo|portfolio|stock)\//.test(pathname))return res.status(400).send('Media tidak valid.');
+    const result=await get(pathname,{access:'private'});
+    if(!result)return res.status(404).send('Media tidak ditemukan.');
+    res.statusCode=200;
+    res.setHeader('Content-Type',result.blob.contentType||'application/octet-stream');
+    res.setHeader('Cache-Control','public, max-age=300, s-maxage=300, stale-while-revalidate=3600');
+    if(result.blob.size!=null)res.setHeader('Content-Length',String(result.blob.size));
+    if(result.stream&&typeof result.stream.pipe==='function'){
+      result.stream.pipe(res);
+      return;
+    }
+    if(result.stream&&typeof result.stream.getReader==='function'){
+      const reader=result.stream.getReader();
+      while(true){
+        const chunk=await reader.read();
+        if(chunk.done)break;
+        res.write(Buffer.from(chunk.value));
+      }
+      res.end();
+      return;
+    }
+    res.status(500).send('Stream media tidak tersedia.');
+  }catch(e){
+    console.error('Blob media proxy:',e.message);
+    res.status(e.statusCode===404?404:500).send('Media tidak dapat dimuat.');
+  }
+});
 
 app.get('/api/health',async(_req,res)=>{const hasDatabaseUrl=Boolean(process.env.DATABASE_URL);try{await settings();res.json({ok:true,database:'postgres',storage:STORAGE_MODE,node:process.version,hasDatabaseUrl});}catch(e){res.status(e.statusCode||500).json({ok:false,database:PERSISTENCE_MODE,storage:STORAGE_MODE,node:process.version,hasDatabaseUrl,message:e.message});}});
 app.get('/api/public',async(_req,res)=>{try{
