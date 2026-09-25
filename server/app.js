@@ -1,0 +1,94 @@
+require('dotenv').config();
+const express = require('express');
+const multer = require('multer');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { neon } = require('@neondatabase/serverless');
+const { del } = require('@vercel/blob');
+const { handleUpload } = require('@vercel/blob/client');
+
+const app = express();
+const ROOT = path.join(__dirname, '..');
+const PUBLIC = path.join(ROOT, 'public');
+const UPLOADS = path.join(PUBLIC, 'uploads');
+const DB_FILE = path.join(ROOT, 'data', 'db.json');
+const USE_POSTGRES = Boolean(process.env.DATABASE_URL);
+const STORAGE_MODE = process.env.VERCEL || process.env.BLOB_READ_WRITE_TOKEN ? 'vercel-blob' : 'local';
+const sql = USE_POSTGRES ? neon(process.env.DATABASE_URL) : null;
+const DEFAULT_SETTINGS = {
+  brand: 'EFASA TEKNIK', tagline: 'Teknik pendingin ruangan',
+  heroTitle: 'Layanan Teknik Pendingin Ruangan',
+  heroText: 'Melayani AC rumahan, perkantoran, dan industrial.',
+  whatsapp: '', email: '', instagram: '', address: 'Malang, Jawa Timur',
+  serviceArea: 'Malang Raya dan sekitarnya', hours: '08.00 - 17.00', logo: ''
+};
+const MIME = new Set(['image/jpeg','image/png','image/webp','image/gif','image/avif','video/mp4','video/webm','video/quicktime']);
+const localUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_r,_f,cb) => cb(null, UPLOADS),
+    filename: (_r,f,cb) => cb(null, `${Date.now()}-${crypto.randomBytes(7).toString('hex')}${path.extname(f.originalname).toLowerCase()}`)
+  }),
+  limits: { fileSize: 100 * 1024 * 1024 },
+  fileFilter: (_r,f,cb) => cb(null, MIME.has(f.mimetype))
+});
+let schemaReady;
+
+if (!USE_POSTGRES) {
+  fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
+  fs.mkdirSync(UPLOADS, { recursive: true });
+}
+
+function id(){return crypto.randomBytes(16).toString('hex');}
+function clean(v,n=500){return String(v??'').trim().slice(0,n);}
+function now(){return new Date().toISOString();}
+function dbRead(){try{return JSON.parse(fs.readFileSync(DB_FILE,'utf8'));}catch{return {settings:{...DEFAULT_SETTINGS},admin:null,portfolio:[],stock:[]};}}
+function dbWrite(db){fs.writeFileSync(`${DB_FILE}.tmp`,JSON.stringify(db,null,2));fs.renameSync(`${DB_FILE}.tmp`,DB_FILE);}
+function secret(){return process.env.SESSION_SECRET || 'efasa-dev-secret-change-me-please';}
+function hash(password,salt=crypto.randomBytes(16).toString('hex')){return `${salt}:${crypto.scryptSync(password,salt,64).toString('hex')}`;}
+function verifyPassword(password,stored){try{const [s,e]=String(stored||'').split(':');if(!s||!e)return false;const a=crypto.scryptSync(password,s,64).toString('hex');return a.length===e.length&&crypto.timingSafeEqual(Buffer.from(a),Buffer.from(e));}catch{return false;}}
+function token(adminId){const p=Buffer.from(JSON.stringify({sub:adminId,exp:Date.now()+86400000})).toString('base64url');return `${p}.${crypto.createHmac('sha256',secret()).update(p).digest('base64url')}`;}
+function session(raw){try{const [p,s]=String(raw||'').split('.');const e=crypto.createHmac('sha256',secret()).update(p).digest('base64url');if(!s||s.length!==e.length||!crypto.timingSafeEqual(Buffer.from(s),Buffer.from(e)))return null;const x=JSON.parse(Buffer.from(p,'base64url'));return x.exp>Date.now()?x:null;}catch{return null;}}
+function cookies(header=''){return Object.fromEntries(header.split(';').map(x=>x.trim()).filter(Boolean).map(x=>{const i=x.indexOf('=');return [x.slice(0,i),decodeURIComponent(x.slice(i+1))];}));}
+function cookie(res,name,value,opts={}){const line=[`${name}=${encodeURIComponent(value)}`,`Path=${opts.path||'/'}`];if(opts.httpOnly)line.push('HttpOnly');if(opts.sameSite)line.push(`SameSite=${opts.sameSite}`);if(opts.maxAge!==undefined)line.push(`Max-Age=${opts.maxAge}`);if(process.env.NODE_ENV==='production'||process.env.VERCEL)line.push('Secure');const cur=res.getHeader('Set-Cookie');res.setHeader('Set-Cookie',[...(cur?Array.isArray(cur)?cur:[cur]:[]),line.join('; ')]);}
+function clear(res,n,httpOnly){cookie(res,n,'',{httpOnly,sameSite:'Lax',maxAge:0});}
+function csrf(req,res){const c=cookies(req.headers.cookie||'');if(c.efasa_csrf)return c.efasa_csrf;const t=crypto.randomBytes(24).toString('hex');cookie(res,'efasa_csrf',t,{sameSite:'Lax',maxAge:86400});return t;}
+function auth(req,res,next){const s=session(cookies(req.headers.cookie||'').efasa_admin);if(!s)return res.status(401).json({ok:false,message:'Unauthorized'});req.adminId=s.sub;next();}
+function csrfGuard(req,res,next){const c=cookies(req.headers.cookie||'');if(!c.efasa_csrf||c.efasa_csrf!==req.headers['x-efasa-csrf'])return res.status(403).json({ok:false,message:'CSRF token tidak valid. Muat ulang dashboard.'});next();}
+function mediaUrlOk(url){try{if(String(url).startsWith('/uploads/'))return true;const u=new URL(url);return u.protocol==='https:'&&/\.blob\.vercel-storage\.com$/i.test(u.hostname);}catch{return false;}}
+async function ready(){if(!USE_POSTGRES)return;if(!schemaReady){schemaReady=(async()=>{await sql`CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)`;await sql`CREATE TABLE IF NOT EXISTS admins(id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;await sql`CREATE TABLE IF NOT EXISTS media_items(id TEXT PRIMARY KEY,item_type TEXT NOT NULL CHECK(item_type IN ('portfolio','stock')),title TEXT,location TEXT,service TEXT,name TEXT,brand TEXT,capacity TEXT,price TEXT,description TEXT,media_url TEXT NOT NULL,media_type TEXT NOT NULL CHECK(media_type IN ('image','video')),created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;await sql`CREATE INDEX IF NOT EXISTS media_items_type_idx ON media_items(item_type,created_at DESC)`;for(const [k,v] of Object.entries(DEFAULT_SETTINGS))await sql`INSERT INTO settings(key,value) VALUES(${k},${v}) ON CONFLICT(key) DO NOTHING`;})().catch(e=>{schemaReady=null;throw e;});}await schemaReady;}
+async function settings(){if(!USE_POSTGRES){const d=dbRead();d.settings={...DEFAULT_SETTINGS,...(d.settings||{})};dbWrite(d);return d.settings;}await ready();const r=await sql`SELECT key,value FROM settings`;return r.reduce((a,x)=>(a[x.key]=x.value,a),{...DEFAULT_SETTINGS});}
+async function adminById(idv){if(!USE_POSTGRES)return dbRead().admin?.id===idv?dbRead().admin:null;await ready();const r=await sql`SELECT id,username,password_hash,created_at FROM admins WHERE id=${idv} LIMIT 1`;return r[0]||null;}
+async function adminByName(name){if(!USE_POSTGRES){const a=dbRead().admin;return a&&a.username===name?a:null;}await ready();const r=await sql`SELECT id,username,password_hash,created_at FROM admins WHERE username=${name} LIMIT 1`;return r[0]||null;}
+async function allMedia(type){if(!USE_POSTGRES){const d=dbRead();return (type==='portfolio'?d.portfolio:d.stock)||[];}await ready();const r=await sql`SELECT id,item_type,title,location,service,name,brand,capacity,price,description,media_url,media_type,created_at FROM media_items WHERE item_type=${type} ORDER BY created_at DESC`;return r.map(x=>({id:x.id,title:x.title||'',location:x.location||'',service:x.service||'',name:x.name||'',brand:x.brand||'',capacity:x.capacity||'',price:x.price||'',description:x.description||'',media:x.media_url,mediaType:x.media_type,createdAt:x.created_at}));}
+async function insertMedia(x){if(!USE_POSTGRES){const d=dbRead();(x.itemType==='portfolio'?d.portfolio:d.stock).unshift(x);dbWrite(d);return;}await ready();await sql`INSERT INTO media_items(id,item_type,title,location,service,name,brand,capacity,price,description,media_url,media_type,created_at) VALUES(${x.id},${x.itemType},${x.title||null},${x.location||null},${x.service||null},${x.name||null},${x.brand||null},${x.capacity||null},${x.price||null},${x.description||null},${x.media},${x.mediaType},${x.createdAt})`;}
+async function removeMedia(type,itemId){if(!USE_POSTGRES){const d=dbRead(),a=type==='portfolio'?d.portfolio:d.stock,i=a.findIndex(x=>x.id===itemId);if(i<0)return null;const [x]=a.splice(i,1);dbWrite(d);return x;}await ready();const r=await sql`DELETE FROM media_items WHERE id=${itemId} AND item_type=${type} RETURNING media_url`;return r[0]||null;}
+async function removeFile(url){if(!url)return;if(url.startsWith('/uploads/')){const f=path.join(UPLOADS,path.basename(url));if(f.startsWith(UPLOADS)&&fs.existsSync(f))fs.unlinkSync(f);return;}if(STORAGE_MODE==='vercel-blob'){try{await del(url);}catch(e){console.warn('Blob delete:',e.message);}}}
+
+app.use(express.json({limit:'300kb'}));
+app.use(express.urlencoded({extended:true,limit:'300kb'}));
+app.use(express.static(PUBLIC,{extensions:['html']}));
+
+app.get('/api/health',async(_req,res)=>{try{await settings();res.json({ok:true,database:USE_POSTGRES?'postgres':'local-json',storage:STORAGE_MODE,node:process.version});}catch(e){res.status(500).json({ok:false,message:e.message});}});
+app.get('/api/public',async(_req,res)=>{try{res.json({ok:true,settings:await settings(),portfolio:await allMedia('portfolio'),stock:await allMedia('stock'),storageMode:STORAGE_MODE});}catch(e){res.status(500).json({ok:false,message:'Data website gagal dimuat.'});}});
+app.get('/api/admin/status',async(req,res)=>{try{const c=cookies(req.headers.cookie||''),a=USE_POSTGRES?await adminById(session(c.efasa_admin)?.sub):dbRead().admin,s=session(c.efasa_admin);const loggedIn=Boolean(a&&s&&a.id===s.sub);res.json({ok:true,configured:Boolean(a),loggedIn,storageMode:STORAGE_MODE,csrfToken:loggedIn?csrf(req,res):(c.efasa_csrf||'')});}catch(e){res.status(500).json({ok:false,message:e.message});}});
+app.post('/api/admin/setup',async(req,res)=>{try{const existing=USE_POSTGRES?await adminByName('__any__'):dbRead().admin;if(existing)return res.status(409).json({ok:false,message:'Admin sudah dibuat. Silakan login.'});const username=clean(req.body.username,32),password=String(req.body.password||'');if(!/^[a-zA-Z0-9._-]{3,32}$/.test(username))return res.status(400).json({ok:false,message:'Username 3-32 karakter.'});if(password.length<10)return res.status(400).json({ok:false,message:'Password minimal 10 karakter.'});const x={id:id(),username,password_hash:hash(password),created_at:now()};if(USE_POSTGRES){await ready();await sql`INSERT INTO admins(id,username,password_hash,created_at) VALUES(${x.id},${x.username},${x.password_hash},${x.created_at})`;}else{const d=dbRead();if(d.admin)return res.status(409).json({ok:false,message:'Admin sudah dibuat.'});d.admin=x;dbWrite(d);}res.json({ok:true,message:'Admin berhasil dibuat.'});}catch(e){res.status(500).json({ok:false,message:e.message});}});
+app.post('/api/admin/login',async(req,res)=>{try{const a=await adminByName(clean(req.body.username,32));if(!a||!verifyPassword(String(req.body.password||''),a.password_hash||a.password))return res.status(401).json({ok:false,message:'Username atau password salah.'});cookie(res,'efasa_admin',token(a.id),{httpOnly:true,sameSite:'Lax',maxAge:86400});csrf(req,res);res.json({ok:true});}catch(e){res.status(500).json({ok:false,message:e.message});}});
+app.post('/api/admin/logout',auth,(req,res)=>{clear(res,'efasa_admin',true);clear(res,'efasa_csrf',false);res.json({ok:true});});
+app.put('/api/admin/settings',auth,csrfGuard,async(req,res)=>{try{const updates={};for(const k of Object.keys(DEFAULT_SETTINGS)){if(typeof req.body[k]==='string')updates[k]=clean(req.body[k],k==='heroText'?1200:500);}if(!USE_POSTGRES){const d=dbRead();d.settings={...DEFAULT_SETTINGS,...(d.settings||{}),...updates};dbWrite(d);return res.json({ok:true,settings:d.settings});}await ready();for(const [k,v] of Object.entries(updates))await sql`INSERT INTO settings(key,value) VALUES(${k},${v}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;res.json({ok:true,settings:await settings()});}catch(e){res.status(500).json({ok:false,message:e.message});}});
+app.post('/api/blob/upload',async(req,res)=>{try{const s=session(cookies(req.headers.cookie||'').efasa_admin);if(!s)return res.status(401).json({error:'Unauthorized'});const out=await handleUpload({body:req.body,request:req,onBeforeGenerateToken:async(_p,payloadRaw)=>{const p=payloadRaw?JSON.parse(payloadRaw):{},kind=p.kind;if(!['logo','portfolio','stock'].includes(kind))throw new Error('Jenis upload tidak valid.');return{allowedContentTypes:kind==='logo'?['image/jpeg','image/png','image/webp']:Array.from(MIME),maximumSizeInBytes:kind==='logo'?5*1024*1024:100*1024*1024,addRandomSuffix:true,tokenPayload:JSON.stringify({kind,adminId:s.sub})};}});res.json(out);}catch(e){res.status(400).json({error:e.message||'Gagal membuat token upload.'});}});
+
+function localMedia(req){return req.file?`/uploads/${req.file.filename}`:'';}
+async function saveItem(type,req,res){try{const media=STORAGE_MODE==='local'?localMedia(req):clean(req.body.mediaUrl,1200);if(!media||!mediaUrlOk(media))return res.status(400).json({ok:false,message:'Media wajib valid.'});const x={id:id(),itemType:type,title:clean(req.body.title||'',140),location:clean(req.body.location,120),service:clean(req.body.service||'',120),name:clean(req.body.name||'',140),brand:clean(req.body.brand,80),capacity:clean(req.body.capacity,60),price:clean(req.body.price,80),description:clean(req.body.description,1200),media,mediaType:req.body.mediaType==='video'?'video':(req.file&&req.file.mimetype.startsWith('video/')?'video':'image'),createdAt:now()};if(type==='portfolio'&&!x.title)x.title='Dokumentasi pekerjaan EFASA TEKNIK';if(type==='stock'&&!x.name)x.name='Unit AC';await insertMedia(x);res.json({ok:true,item:x});}catch(e){if(req.file?.path&&fs.existsSync(req.file.path))fs.unlinkSync(req.file.path);res.status(500).json({ok:false,message:e.message});}}
+app.post('/api/admin/portfolio',auth,csrfGuard,localUpload.single('media'),(req,res)=>saveItem('portfolio',req,res));
+app.post('/api/admin/stock',auth,csrfGuard,localUpload.single('media'),(req,res)=>saveItem('stock',req,res));
+app.post('/api/admin/logo',auth,csrfGuard,localUpload.single('media'),async(req,res)=>{try{const media=STORAGE_MODE==='local'?localMedia(req):clean(req.body.mediaUrl,1200);if(!media||!mediaUrlOk(media)||(STORAGE_MODE!=='local'&&req.body.mediaType!=='image'))return res.status(400).json({ok:false,message:'Logo tidak valid.'});const st=await settings();if(st.logo)await removeFile(st.logo);if(!USE_POSTGRES){const d=dbRead();d.settings={...DEFAULT_SETTINGS,...(d.settings||{}),logo:media};dbWrite(d);}else{await ready();await sql`INSERT INTO settings(key,value) VALUES('logo',${media}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;}res.json({ok:true,logo:media});}catch(e){if(req.file?.path&&fs.existsSync(req.file.path))fs.unlinkSync(req.file.path);res.status(500).json({ok:false,message:e.message});}});
+
+async function delItem(type,req,res){try{const x=await removeMedia(type,req.params.id);if(!x)return res.status(404).json({ok:false,message:'Data tidak ditemukan.'});await removeFile(x.media_url||x.media);res.json({ok:true});}catch(e){res.status(500).json({ok:false,message:e.message});}}
+app.delete('/api/admin/portfolio/:id',auth,csrfGuard,(req,res)=>delItem('portfolio',req,res));
+app.delete('/api/admin/stock/:id',auth,csrfGuard,(req,res)=>delItem('stock',req,res));
+app.get('/admin',(req,res)=>res.sendFile(path.join(PUBLIC,'admin.html')));
+app.get('/admin/setup',(req,res)=>res.sendFile(path.join(PUBLIC,'setup.html')));
+app.get('/admin/login',(req,res)=>res.sendFile(path.join(PUBLIC,'login.html')));
+app.use((err,_req,res,_next)=>{console.error(err);if(err instanceof multer.MulterError)return res.status(400).json({ok:false,message:`Upload gagal: ${err.message}`});res.status(500).json({ok:false,message:'Terjadi kesalahan server.'});});
+module.exports=app;
