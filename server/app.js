@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { neon } = require('@neondatabase/serverless');
-const { del, issueSignedToken, presignUrl } = require('@vercel/blob');
+const { put, del, issueSignedToken, presignUrl } = require('@vercel/blob');
 const { handleUpload } = require('@vercel/blob/client');
 
 const app = express();
@@ -33,6 +33,11 @@ const localUpload = multer({
   }),
   limits: { fileSize: 100 * 1024 * 1024 },
   fileFilter: (_r,f,cb) => cb(null, MIME.has(f.mimetype))
+});
+const logoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 4 * 1024 * 1024 },
+  fileFilter: (_r,f,cb) => cb(null, ['image/jpeg','image/png','image/webp'].includes(f.mimetype))
 });
 let schemaReady;
 
@@ -163,18 +168,45 @@ function localMedia(req){return req.file?`/uploads/${req.file.filename}`:'';}
 async function saveItem(type,req,res){try{const media=STORAGE_MODE==='local'?localMedia(req):blobMediaFromBody(req.body,type);if(!media)return res.status(400).json({ok:false,message:'Media Blob tidak valid. Upload ulang file dari dashboard.'});const x={id:id(),itemType:type,title:clean(req.body.title||'',140),location:clean(req.body.location,120),service:clean(req.body.service||'',120),name:clean(req.body.name||'',140),brand:clean(req.body.brand,80),capacity:clean(req.body.capacity,60),price:clean(req.body.price,80),description:clean(req.body.description,1200),media,mediaType:req.body.mediaType==='video'?'video':(req.file&&req.file.mimetype.startsWith('video/')?'video':'image'),createdAt:now()};if(type==='portfolio'&&!x.title)x.title='Dokumentasi pekerjaan EFASA TEKNIK';if(type==='stock'&&!x.name)x.name='Unit AC';await insertMedia(x);res.json({ok:true,item:x});}catch(e){if(req.file?.path&&fs.existsSync(req.file.path))fs.unlinkSync(req.file.path);res.status(500).json({ok:false,message:e.message});}}
 app.post('/api/admin/portfolio',auth,csrfGuard,localUpload.single('media'),(req,res)=>saveItem('portfolio',req,res));
 app.post('/api/admin/stock',auth,csrfGuard,localUpload.single('media'),(req,res)=>saveItem('stock',req,res));
-app.post('/api/admin/logo',auth,csrfGuard,localUpload.single('media'),async(req,res)=>{try{
-  const media=STORAGE_MODE==='local'?localMedia(req):blobMediaFromBody(req.body,'logo');
-  const mediaType=String(req.body?.mediaType||'').toLowerCase();
-  const mediaPath=String(req.body?.mediaPath||'');
-  let urlPath='';
-  if(media&&media.startsWith('https://')){
-    try{urlPath=decodeURIComponent(new URL(media).pathname.replace(/^\//,''));}catch{}
+app.post('/api/admin/logo',auth,csrfGuard,logoUpload.single('media'),async(req,res)=>{
+  try{
+    if(!req.file)return res.status(400).json({ok:false,message:'File logo wajib dipilih.'});
+    let media='';
+    if(STORAGE_MODE==='vercel-blob'){
+      const result=await put(
+        'logo/'+Date.now()+'-'+crypto.randomBytes(8).toString('hex')+'-'+path.basename(req.file.originalname),
+        req.file.buffer,
+        {
+          access:'private',
+          contentType:req.file.mimetype,
+          addRandomSuffix:false
+        }
+      );
+      media=result.url;
+    }else{
+      const filename=`${Date.now()}-${crypto.randomBytes(7).toString('hex')}${path.extname(req.file.originalname).toLowerCase()}`;
+      const filePath=path.join(UPLOADS,filename);
+      fs.writeFileSync(filePath,req.file.buffer);
+      media='/uploads/'+filename;
+    }
+
+    const st=await settings();
+    if(st.logo)await removeFile(st.logo);
+
+    if(!USE_POSTGRES){
+      const d=dbRead();
+      d.settings={...DEFAULT_SETTINGS,...(d.settings||{}),logo:media};
+      dbWrite(d);
+    }else{
+      await ready();
+      await sql`INSERT INTO settings(key,value) VALUES('logo',${media}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;
+    }
+    res.json({ok:true,logo:media});
+  }catch(e){
+    console.error('Logo upload:',e);
+    res.status(500).json({ok:false,message:e.message||'Gagal menyimpan logo.'});
   }
-  const isBlobLogo=STORAGE_MODE!=='local'&&media&&(mediaPath.startsWith('logo/')||urlPath.startsWith('logo/'));
-  const isLocalLogo=STORAGE_MODE==='local'&&Boolean(media);
-  if(!(isBlobLogo||isLocalLogo))return res.status(400).json({ok:false,message:'Logo gagal diproses. Upload selesai tetapi URL Blob tidak terbaca.'});
-  if(STORAGE_MODE==='local'&&mediaType&&mediaType!=='image')return res.status(400).json({ok:false,message:'Format logo tidak didukung.'});const st=await settings();if(st.logo)await removeFile(st.logo);if(!USE_POSTGRES){const d=dbRead();d.settings={...DEFAULT_SETTINGS,...(d.settings||{}),logo:media};dbWrite(d);}else{await ready();await sql`INSERT INTO settings(key,value) VALUES('logo',${media}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;}res.json({ok:true,logo:media});}catch(e){if(req.file?.path&&fs.existsSync(req.file.path))fs.unlinkSync(req.file.path);res.status(500).json({ok:false,message:e.message});}});
+});
 
 async function delItem(type,req,res){try{const x=await removeMedia(type,req.params.id);if(!x)return res.status(404).json({ok:false,message:'Data tidak ditemukan.'});await removeFile(x.media_url||x.media);res.json({ok:true});}catch(e){res.status(500).json({ok:false,message:e.message});}}
 app.delete('/api/admin/portfolio/:id',auth,csrfGuard,(req,res)=>delItem('portfolio',req,res));
