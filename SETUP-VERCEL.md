@@ -118,3 +118,27 @@ Tidak perlu XAMPP.
 
 
 > Deployment note: Vercel must build the latest `main` commit. Do not redeploy an older deployment snapshot when testing a new Git commit.
+
+
+## Jika muncul EROFS: read-only file system
+
+Kalau saat /admin/setup muncul error seperti:
+
+`EROFS: read-only file system, open '/var/task/data/db.json.tmp'`
+
+artinya deployment Vercel belum mendapatkan `DATABASE_URL`. Vercel menjalankan Function dengan filesystem project yang read-only, sehingga project tidak boleh menyimpan database production ke `data/db.json`.
+
+Perbaiki dengan:
+1. Buka Vercel Project → Storage.
+2. Tambahkan Neon Postgres / Neon integration.
+3. Pilih Create New Neon Account atau hubungkan akun Neon yang sudah ada.
+4. Pastikan resource terhubung ke project WEBSITE-EFASA dan environment **Production**.
+5. Cek Project Settings → Environment Variables. Harus ada `DATABASE_URL` untuk Production.
+6. Redeploy setelah integration/env dibuat atau diubah.
+
+Vercel's Neon integration menyediakan Serverless Postgres dan contoh integrasinya menggunakan `DATABASE_URL`. Setelah resource/environment berubah, buat deployment baru agar variable baru tersedia pada deployment. Lihat dokumentasi resmi Vercel/Neon.
+
+Setelah itu:
+- `/admin/setup` membuat akun admin di Postgres.
+- `/admin` mengelola data website.
+- Foto/video production disimpan di Vercel Blob, bukan filesystem Function.
