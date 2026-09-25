@@ -67,19 +67,24 @@ function mediaUrlOk(url){try{if(String(url).startsWith('/uploads/'))return true;
 function blobMediaFromBody(body,kind){
   const supplied=clean(body?.mediaUrl,2000);
   const origin=clean(body?.mediaOrigin,300);
-  const suppliedPath=clean(body?.mediaPath,1000).replace(/^\/+/,'');
+  let suppliedPath=clean(body?.mediaPath,1000);
+  while(suppliedPath.startsWith('/'))suppliedPath=suppliedPath.slice(1);
+
+  let baseOrigin=origin;
+  while(baseOrigin.endsWith('/'))baseOrigin=baseOrigin.slice(0,-1);
 
   const candidates=[];
-  if(suppliedPath&&origin)candidates.push(origin.replace(/\\/+$/,'')+'/'+suppliedPath);
+  if(suppliedPath&&baseOrigin)candidates.push(baseOrigin+'/'+suppliedPath);
   if(supplied)candidates.push(supplied);
 
   for(const candidate of candidates){
     try{
       const u=new URL(candidate);
-      const validHost=u.hostname==='blob.vercel-storage.com'||/\\.blob\\.vercel-storage\\.com$/i.test(u.hostname);
-      if(u.protocol!=='https:'||!validHost)continue;
+      const validHost=u.protocol==='https:' &&
+        (u.hostname==='blob.vercel-storage.com'||u.hostname.endsWith('.blob.vercel-storage.com'));
+      if(!validHost)continue;
 
-      const pathname=decodeURIComponent(u.pathname.replace(/^\\/+/, ''));
+      const pathname=decodeURIComponent(u.pathname).slice(1);
       if(!pathname.startsWith(kind+'/'))continue;
 
       return u.origin+'/'+pathname.split('/').map(encodeURIComponent).join('/');
