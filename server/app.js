@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { neon } = require('@neondatabase/serverless');
-const { del } = require('@vercel/blob');
+const { del, issueSignedToken, presignUrl } = require('@vercel/blob');
 const { handleUpload } = require('@vercel/blob/client');
 
 const app = express();
@@ -80,6 +80,34 @@ app.post('/api/admin/login',async(req,res)=>{try{const a=await adminByName(clean
 app.post('/api/admin/password',auth,csrfGuard,async(req,res)=>{try{const password=String(req.body.password||''),confirm=String(req.body.confirmPassword||'');if(password.length<10)return res.status(400).json({ok:false,message:'Password baru minimal 10 karakter.'});if(password!==confirm)return res.status(400).json({ok:false,message:'Konfirmasi password tidak sama.'});const newHash=hash(password);if(!USE_POSTGRES){const d=dbRead();if(!d.admin||d.admin.id!==req.adminId)return res.status(404).json({ok:false,message:'Admin tidak ditemukan.'});d.admin.password_hash=newHash;dbWrite(d);}else{await ready();const r=await sql`UPDATE admins SET password_hash=${newHash} WHERE id=${req.adminId} RETURNING id`;if(!r[0])return res.status(404).json({ok:false,message:'Admin tidak ditemukan.'});}cookie(res,'efasa_admin',token(req.adminId),{httpOnly:true,sameSite:'Lax',maxAge:86400});res.json({ok:true,message:'Password berhasil diubah.'});}catch(e){res.status(500).json({ok:false,message:e.message});}});
 app.post('/api/admin/logout',auth,(req,res)=>{clear(res,'efasa_admin',true);clear(res,'efasa_csrf',false);res.json({ok:true});});
 app.put('/api/admin/settings',auth,csrfGuard,async(req,res)=>{try{const updates={};for(const k of Object.keys(DEFAULT_SETTINGS)){if(typeof req.body[k]==='string')updates[k]=clean(req.body[k],k==='heroText'?1200:500);}if(!USE_POSTGRES){const d=dbRead();d.settings={...DEFAULT_SETTINGS,...(d.settings||{}),...updates};dbWrite(d);return res.json({ok:true,settings:d.settings});}await ready();for(const [k,v] of Object.entries(updates))await sql`INSERT INTO settings(key,value) VALUES(${k},${v}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;res.json({ok:true,settings:await settings()});}catch(e){res.status(500).json({ok:false,message:e.message});}});
+app.post('/api/blob/upload-url',auth,csrfGuard,async(req,res)=>{try{
+  const kind=clean(req.body?.kind,20),fileName=clean(req.body?.fileName,240),contentType=clean(req.body?.contentType,120);
+  const size=Number(req.body?.size||0);
+  if(!['logo','portfolio','stock'].includes(kind))return res.status(400).json({ok:false,message:'Jenis upload tidak valid.'});
+  if(!fileName||!size||!Number.isFinite(size)||size<1)return res.status(400).json({ok:false,message:'Informasi file tidak valid.'});
+  const logoTypes=new Set(['image/jpeg','image/png','image/webp']);
+  if(kind==='logo'){
+    if(!logoTypes.has(contentType))return res.status(400).json({ok:false,message:'Logo harus JPG, PNG, atau WebP.'});
+    if(size>5*1024*1024)return res.status(400).json({ok:false,message:'Ukuran logo maksimal 5 MB.'});
+  }else{
+    if(!MIME.has(contentType))return res.status(400).json({ok:false,message:'Tipe file tidak didukung.'});
+    if(size>100*1024*1024)return res.status(400).json({ok:false,message:'Ukuran file maksimal 100 MB.'});
+  }
+  const safeName=path.basename(fileName).replace(/[^a-zA-Z0-9._-]+/g,'-').replace(/^-+|-+$/g,'')||'file';
+  const pathname=kind+'/'+Date.now()+'-'+crypto.randomBytes(8).toString('hex')+'-'+safeName;
+  const token=await issueSignedToken({
+    pathname,
+    operations:['put'],
+    allowedContentTypes:[contentType],
+    maximumSizeInBytes:kind==='logo'?5*1024*1024:100*1024*1024,
+    validUntil:Date.now()+15*60*1000
+  });
+  const signed=await presignUrl(token,{pathname,operation:'put',validUntil:Date.now()+15*60*1000});
+  const storeId=String(process.env.BLOB_STORE_ID||'').replace(/^store_/,'');
+  if(!storeId)throw new Error('BLOB_STORE_ID tidak tersedia. Pastikan Blob store terhubung ke project Vercel.');
+  const mediaUrl='https://'+storeId+'.public.blob.vercel-storage.com/'+pathname.split('/').map(encodeURIComponent).join('/');
+  res.json({ok:true,presignedUrl:signed.presignedUrl,mediaUrl,mediaType:contentType.startsWith('video/')?'video':'image'});
+}catch(e){console.error('Blob presign upload:',e);res.status(400).json({ok:false,message:e.message||'Gagal membuat URL upload Blob.'});}});
 app.post('/api/blob/upload',async(req,res)=>{try{const s=session(cookies(req.headers.cookie||'').efasa_admin);if(!s)return res.status(401).json({error:'Unauthorized'});const body=req.body&&typeof req.body==='object'?req.body:null;if(!body||typeof body.type!=='string'||!body.payload)throw new Error('Payload upload Blob tidak valid.');const uploadOptions={body,request:req,...(process.env.BLOB_READ_WRITE_TOKEN?{token:process.env.BLOB_READ_WRITE_TOKEN}:{}),onBeforeGenerateToken:async(_p,payloadRaw)=>{let p={};try{p=payloadRaw?JSON.parse(payloadRaw):{};}catch{throw new Error('Payload upload tidak valid.');}const kind=p.kind;if(!['logo','portfolio','stock'].includes(kind))throw new Error('Jenis upload tidak valid.');return{allowedContentTypes:kind==='logo'?['image/jpeg','image/png','image/webp']:Array.from(MIME),maximumSizeInBytes:kind==='logo'?5*1024*1024:100*1024*1024,addRandomSuffix:true,tokenPayload:JSON.stringify({kind,adminId:s.sub})};},onUploadCompleted:async()=>{}};const out=await handleUpload(uploadOptions);return res.status(200).json(out);}catch(e){console.error('Blob client upload:',e.message);return res.status(400).json({error:e.message||'Gagal membuat token upload.'});}});
 
 function localMedia(req){return req.file?`/uploads/${req.file.filename}`:'';}
