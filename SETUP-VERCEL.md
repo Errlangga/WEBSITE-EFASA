@@ -116,3 +116,5 @@ http://localhost:3000
 
 Tidak perlu XAMPP.
 
+
+> Deployment note: Vercel must build the latest `main` commit. Do not redeploy an older deployment snapshot when testing a new Git commit.
