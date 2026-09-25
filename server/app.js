@@ -91,7 +91,7 @@ app.post('/api/admin/logo',auth,csrfGuard,localUpload.single('media'),async(req,
 async function delItem(type,req,res){try{const x=await removeMedia(type,req.params.id);if(!x)return res.status(404).json({ok:false,message:'Data tidak ditemukan.'});await removeFile(x.media_url||x.media);res.json({ok:true});}catch(e){res.status(500).json({ok:false,message:e.message});}}
 app.delete('/api/admin/portfolio/:id',auth,csrfGuard,(req,res)=>delItem('portfolio',req,res));
 app.delete('/api/admin/stock/:id',auth,csrfGuard,(req,res)=>delItem('stock',req,res));
-app.get('/admin',(req,res)=>res.sendFile(path.join(PUBLIC,'admin.html')));
+app.get('/admin',(req,res)=>res.sendFile(path.join(PUBLIC,'admin','index.html')));
 app.get('/admin/setup',(req,res)=>res.sendFile(path.join(PUBLIC,'setup.html')));
 app.get('/admin/login',(req,res)=>res.sendFile(path.join(PUBLIC,'login.html')));
 app.use((err,_req,res,_next)=>{console.error(err);if(err instanceof multer.MulterError)return res.status(400).json({ok:false,message:`Upload gagal: ${err.message}`});res.status(err.statusCode||500).json({ok:false,message:err.message||'Terjadi kesalahan server.'});});
