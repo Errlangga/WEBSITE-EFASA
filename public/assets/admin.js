@@ -20,21 +20,30 @@ function esc(value) {
 }
 function setProgress(id,text){ var el=document.getElementById(id); if(el) el.textContent=text||''; }
 
-async function getBlobClient(){
-  if (!blobModulePromise) blobModulePromise = import('https://esm.sh/@vercel/blob@2.8.0/client');
-  return blobModulePromise;
-}
 async function uploadBlob(file,kind,progressId){
-  var mod = await getBlobClient();
-  setProgress(progressId,'Mengupload...');
-  var result = await mod.upload(kind + '/' + Date.now() + '-' + file.name,file,{
-    access:'public',
-    handleUploadUrl:'/api/blob/upload',
-    multipart:file.size > 4*1024*1024,
-    clientPayload:JSON.stringify({kind:kind}),
-    onUploadProgress:function(event){ setProgress(progressId,'Upload ' + Math.round(event.percentage || 0) + '%'); }
+  setProgress(progressId,'Menyiapkan upload...');
+  const info=await api('/api/blob/upload-url',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({kind:kind,fileName:file.name,contentType:file.type,size:file.size})
   });
-  return {mediaUrl:result.url,mediaType:file.type.indexOf('video/')===0?'video':'image'};
+  if(!info.presignedUrl||!info.mediaUrl)throw new Error('Server tidak mengembalikan URL upload Blob.');
+  await new Promise(function(resolve,reject){
+    var xhr=new XMLHttpRequest();
+    xhr.open('PUT',info.presignedUrl,true);
+    if(file.type)xhr.setRequestHeader('Content-Type',file.type);
+    xhr.upload.onprogress=function(event){
+      if(event.lengthComputable)setProgress(progressId,'Upload '+Math.round(event.loaded/event.total*100)+'%');
+    };
+    xhr.onload=function(){
+      if(xhr.status>=200&&xhr.status<300){setProgress(progressId,'Selesai.');resolve();}
+      else reject(new Error('Upload ke Vercel Blob gagal (HTTP '+xhr.status+').'));
+    };
+    xhr.onerror=function(){reject(new Error('Koneksi upload ke Vercel Blob gagal.'));};
+    xhr.onabort=function(){reject(new Error('Upload dibatalkan.'));};
+    xhr.send(file);
+  });
+  return {mediaUrl:info.mediaUrl,mediaType:info.mediaType};
 }
 
 async function refresh(){
