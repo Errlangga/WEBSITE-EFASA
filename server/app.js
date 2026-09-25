@@ -143,13 +143,16 @@ app.get('/api/media',async(req,res)=>{
 
 app.get('/api/health',async(_req,res)=>{const hasDatabaseUrl=Boolean(process.env.DATABASE_URL);try{await settings();res.json({ok:true,database:'postgres',storage:STORAGE_MODE,node:process.version,hasDatabaseUrl});}catch(e){res.status(e.statusCode||500).json({ok:false,database:PERSISTENCE_MODE,storage:STORAGE_MODE,node:process.version,hasDatabaseUrl,message:e.message});}});
 app.get('/api/public',async(_req,res)=>{try{
+  res.setHeader('Cache-Control','no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma','no-cache');
+  res.setHeader('Expires','0');
   const siteSettings=await settings();
   if(siteSettings.logo)siteSettings.logo=await browserMediaUrl(siteSettings.logo);
   const portfolio=await allMedia('portfolio');
   const stock=await allMedia('stock');
   const media=[...portfolio,...stock];
   for(const item of media)item.media=await browserMediaUrl(item.media);
-  res.json({ok:true,settings:siteSettings,portfolio,stock,storageMode:STORAGE_MODE});
+  res.status(200).json({ok:true,settings:siteSettings,portfolio,stock,storageMode:STORAGE_MODE});
 }catch(e){res.status(e.statusCode||500).json({ok:false,message:e.message||'Data website gagal dimuat.',database:PERSISTENCE_MODE});}});
 app.get('/api/admin/status',async(req,res)=>{try{requirePersistence();const c=cookies(req.headers.cookie||''),s=session(c.efasa_admin);let a=null;if(USE_POSTGRES){if(s)a=await adminById(s.sub);}else{a=dbRead().admin;}const loggedIn=Boolean(a&&s&&a.id===s.sub);const configured=Boolean(await adminByName('__any__'));res.json({ok:true,configured,loggedIn,storageMode:STORAGE_MODE,csrfToken:loggedIn?csrf(req,res):(c.efasa_csrf||'')});}catch(e){res.status(500).json({ok:false,message:e.message});}});
 app.post('/api/admin/setup',async(req,res)=>{try{requirePersistence();let existing;if(USE_POSTGRES){await ready();const r=await sql`SELECT id FROM admins LIMIT 1`;existing=r[0]||null;}else{existing=dbRead().admin;}if(existing)return res.status(409).json({ok:false,message:'Admin sudah dibuat. Silakan login.'});const username=clean(req.body.username,32),password=String(req.body.password||'');if(!/^[a-zA-Z0-9._-]{3,32}$/.test(username))return res.status(400).json({ok:false,message:'Username 3-32 karakter.'});if(password.length<10)return res.status(400).json({ok:false,message:'Password minimal 10 karakter.'});const x={id:id(),username,password_hash:hash(password),created_at:now()};if(USE_POSTGRES){await ready();await sql`INSERT INTO admins(id,username,password_hash,created_at) VALUES(${x.id},${x.username},${x.password_hash},${x.created_at})`;}else{const d=dbRead();if(d.admin)return res.status(409).json({ok:false,message:'Admin sudah dibuat.'});d.admin=x;dbWrite(d);}res.json({ok:true,message:'Admin berhasil dibuat.'});}catch(e){res.status(500).json({ok:false,message:e.message});}});
