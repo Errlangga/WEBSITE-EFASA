@@ -110,6 +110,8 @@ $('#logoForm').addEventListener('submit',async function(event){
   }catch(e){setProgress('logoProgress',e.message);}
 });
 
+$('#passwordForm').addEventListener('submit',async function(event){event.preventDefault();var form=event.target;var values=Object.fromEntries(new FormData(form));if(values.password!==values.confirmPassword){setProgress('passwordProgress','Password dan konfirmasi tidak sama.');return;}try{var data=await api('/api/admin/password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(values)});setProgress('passwordProgress',data.message||'Password berhasil diubah.');form.reset();}catch(e){setProgress('passwordProgress',e.message);}});
+
 $('#settingsForm').addEventListener('submit',async function(event){
   event.preventDefault();
   try{await api('/api/admin/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(new FormData(event.target)))});alert('Pengaturan disimpan.');}
