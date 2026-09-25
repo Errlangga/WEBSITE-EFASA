@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { neon } = require('@neondatabase/serverless');
-const { put, get, del, issueSignedToken, presignUrl } = require('@vercel/blob');
+const { put, get, head, del, issueSignedToken, presignUrl } = require('@vercel/blob');
 const { handleUpload } = require('@vercel/blob/client');
 
 const app = express();
@@ -70,19 +70,13 @@ async function resolveBlobMedia(body,kind){
   if(!pathname||!pathname.startsWith(kind+'/'))return '';
 
   try{
-    const result=await get(pathname,{access:'private',useCache:false});
-    const canonical=result?.blob?.url;
-    if(!canonical)return '';
+    const metadata=await head(pathname);
+    const storedPath=clean(metadata?.pathname,1000);
+    if(storedPath!==pathname)return '';
 
-    const u=new URL(canonical);
-    const validHost=u.protocol==='https:' &&
-      (u.hostname==='blob.vercel-storage.com'||u.hostname.endsWith('.blob.vercel-storage.com'));
-    if(!validHost)return '';
-
-    const canonicalPath=decodeURIComponent(u.pathname).slice(1);
-    if(!canonicalPath.startsWith(kind+'/'))return '';
-
-    return u.origin+'/'+canonicalPath.split('/').map(encodeURIComponent).join('/');
+    // Store only our stable application proxy. The Blob store is private,
+    // so the browser never receives or relies on a raw private Blob URL.
+    return '/api/media?path='+encodeURIComponent(pathname);
   }catch(e){
     console.warn('Blob resolve:',e.message);
     return '';
@@ -113,7 +107,29 @@ async function adminByName(name){requirePersistence();if(!USE_POSTGRES){const a=
 async function allMedia(type){requirePersistence();if(!USE_POSTGRES){const d=dbRead();return (type==='portfolio'?d.portfolio:d.stock)||[];}await ready();const r=await sql`SELECT id,item_type,title,location,service,name,brand,capacity,price,description,media_url,media_type,created_at FROM media_items WHERE item_type=${type} ORDER BY created_at DESC`;return r.map(x=>({id:x.id,title:x.title||'',location:x.location||'',service:x.service||'',name:x.name||'',brand:x.brand||'',capacity:x.capacity||'',price:x.price||'',description:x.description||'',media:x.media_url,mediaType:x.media_type,createdAt:x.created_at}));}
 async function insertMedia(x){requirePersistence();if(!USE_POSTGRES){const d=dbRead();(x.itemType==='portfolio'?d.portfolio:d.stock).unshift(x);dbWrite(d);return;}await ready();await sql`INSERT INTO media_items(id,item_type,title,location,service,name,brand,capacity,price,description,media_url,media_type,created_at) VALUES(${x.id},${x.itemType},${x.title||null},${x.location||null},${x.service||null},${x.name||null},${x.brand||null},${x.capacity||null},${x.price||null},${x.description||null},${x.media},${x.mediaType},${x.createdAt})`;}
 async function removeMedia(type,itemId){requirePersistence();if(!USE_POSTGRES){const d=dbRead(),a=type==='portfolio'?d.portfolio:d.stock,i=a.findIndex(x=>x.id===itemId);if(i<0)return null;const [x]=a.splice(i,1);dbWrite(d);return x;}await ready();const r=await sql`DELETE FROM media_items WHERE id=${itemId} AND item_type=${type} RETURNING media_url`;return r[0]||null;}
-async function removeFile(url){if(!url)return;if(url.startsWith('/uploads/')){const f=path.join(UPLOADS,path.basename(url));if(f.startsWith(UPLOADS)&&fs.existsSync(f))fs.unlinkSync(f);return;}if(STORAGE_MODE==='vercel-blob'){try{await del(url);}catch(e){console.warn('Blob delete:',e.message);}}}
+async function removeFile(url){
+  if(!url)return;
+
+  if(url.startsWith('/uploads/')){
+    const f=path.join(UPLOADS,path.basename(url));
+    if(f.startsWith(UPLOADS)&&fs.existsSync(f))fs.unlinkSync(f);
+    return;
+  }
+
+  if(STORAGE_MODE==='vercel-blob'){
+    try{
+      let target=url;
+      if(url.startsWith('/api/media?path=')){
+        const q=new URL(url,'https://efasa.local').searchParams.get('path')||'';
+        if(!/^(logo|portfolio|stock)\\//.test(q))return;
+        target=q;
+      }
+      await del(target,{access:'private'});
+    }catch(e){
+      console.warn('Blob delete:',e.message);
+    }
+  }
+}
 
 app.use(express.json({limit:'300kb'}));
 app.use(express.urlencoded({extended:true,limit:'300kb'}));
