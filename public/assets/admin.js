@@ -25,7 +25,7 @@ async function uploadBlob(file,kind,progressId){
   const info=await api('/api/blob/upload-url',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({kind:kind,fileName:file.name,contentType:file.type,size:file.size})
+    body:JSON.stringify({kind:kind,fileName:file.name,contentType:file.type||((/\.jpe?g$/i.test(file.name))?'image/jpeg':(/\.png$/i.test(file.name)?'image/png':(/\.webp$/i.test(file.name)?'image/webp':''))),size:file.size})
   });
   if(!info.presignedUrl||!info.mediaUrl)throw new Error('Server tidak mengembalikan URL upload Blob.');
   await new Promise(function(resolve,reject){
