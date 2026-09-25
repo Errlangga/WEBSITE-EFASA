@@ -7,6 +7,7 @@ function esc(value) {
 function safeMediaUrl(url) {
   var value = String(url || '');
   if (value.indexOf('/uploads/') === 0) return value;
+  if (value.indexOf('/api/media?path=') === 0) return value;
   try {
     var parsed = new URL(value, location.origin);
     if (parsed.protocol === 'https:' && /\.blob\.vercel-storage\.com$/i.test(parsed.hostname)) return parsed.href;
