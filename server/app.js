@@ -67,7 +67,6 @@ async function browserMediaUrl(url){
   try{
     const u=new URL(value);
     if(u.protocol!=='https:'||!/\.blob\.vercel-storage\.com$/i.test(u.hostname))return '';
-    if(/\.public\.blob\.vercel-storage\.com$/i.test(u.hostname))return u.href;
     const pathname=decodeURIComponent(u.pathname.replace(/^\//,''));
     if(!pathname)return '';
     const validUntil=Date.now()+60*60*1000;
@@ -137,9 +136,10 @@ app.post('/api/blob/upload-url',auth,csrfGuard,async(req,res)=>{try{
   const signed=await presignUrl(token,{pathname,operation:'put',validUntil:Date.now()+15*60*1000});
   const storeId=String(process.env.BLOB_STORE_ID||'').replace(/^store_/,'').trim();
   if(!storeId)throw new Error('BLOB_STORE_ID tidak tersedia. Pastikan Blob store terhubung ke project Vercel.');
-  const access=String(process.env.BLOB_ACCESS||'public').toLowerCase()==='private'?'private':'public';
-  const mediaUrl='https://'+storeId+'.'+access+'.blob.vercel-storage.com/'+pathname.split('/').map(encodeURIComponent).join('/');
-  res.json({ok:true,presignedUrl:signed.presignedUrl,mediaUrl,mediaType:contentType.startsWith('video/')?'video':'image',access});
+  const signedBlobUrl=new URL(signed.presignedUrl);
+  signedBlobUrl.search='';
+  const mediaUrl=signedBlobUrl.toString();
+  res.json({ok:true,presignedUrl:signed.presignedUrl,mediaUrl,mediaType:contentType.startsWith('video/')?'video':'image'});
 }catch(e){console.error('Blob presign upload:',e);res.status(400).json({ok:false,message:e.message||'Gagal membuat URL upload Blob.'});}});
 app.post('/api/blob/upload',async(req,res)=>{try{const s=session(cookies(req.headers.cookie||'').efasa_admin);if(!s)return res.status(401).json({error:'Unauthorized'});const body=req.body&&typeof req.body==='object'?req.body:null;if(!body||typeof body.type!=='string'||!body.payload)throw new Error('Payload upload Blob tidak valid.');const uploadOptions={body,request:req,...(process.env.BLOB_READ_WRITE_TOKEN?{token:process.env.BLOB_READ_WRITE_TOKEN}:{}),onBeforeGenerateToken:async(_p,payloadRaw)=>{let p={};try{p=payloadRaw?JSON.parse(payloadRaw):{};}catch{throw new Error('Payload upload tidak valid.');}const kind=p.kind;if(!['logo','portfolio','stock'].includes(kind))throw new Error('Jenis upload tidak valid.');return{allowedContentTypes:kind==='logo'?['image/jpeg','image/png','image/webp']:Array.from(MIME),maximumSizeInBytes:kind==='logo'?5*1024*1024:100*1024*1024,addRandomSuffix:true,tokenPayload:JSON.stringify({kind,adminId:s.sub})};},onUploadCompleted:async()=>{}};const out=await handleUpload(uploadOptions);return res.status(200).json(out);}catch(e){console.error('Blob client upload:',e.message);return res.status(400).json({error:e.message||'Gagal membuat token upload.'});}});
 
