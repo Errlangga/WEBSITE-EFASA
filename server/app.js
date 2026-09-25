@@ -67,15 +67,25 @@ function mediaUrlOk(url){try{if(String(url).startsWith('/uploads/'))return true;
 async function resolveBlobMedia(body,kind){
   let pathname=clean(body?.mediaPath,1000);
   while(pathname.startsWith('/'))pathname=pathname.slice(1);
+
+  // Backward compatibility with older admin.js versions that only submit mediaUrl.
+  if(!pathname){
+    const mediaUrl=clean(body?.mediaUrl,2000);
+    if(mediaUrl.startsWith('/api/media?path=')){
+      try{
+        const parsed=new URL(mediaUrl,'https://efasa.local');
+        pathname=clean(parsed.searchParams.get('path')||'',1000);
+        while(pathname.startsWith('/'))pathname=pathname.slice(1);
+      }catch{}
+    }
+  }
+
   if(!pathname||!pathname.startsWith(kind+'/'))return '';
 
   try{
     const metadata=await head(pathname);
     const storedPath=clean(metadata?.pathname,1000);
     if(storedPath!==pathname)return '';
-
-    // Store only our stable application proxy. The Blob store is private,
-    // so the browser never receives or relies on a raw private Blob URL.
     return '/api/media?path='+encodeURIComponent(pathname);
   }catch(e){
     console.warn('Blob resolve:',e.message);
@@ -217,7 +227,9 @@ app.post('/api/blob/upload-url',auth,csrfGuard,async(req,res)=>{try{
   res.json({
     ok:true,
     presignedUrl:signed.presignedUrl,
-    mediaUrl:'',
+    // Keep a stable application URL for older admin.js clients.
+    // This is not the private Blob URL and is only a reference to our proxy.
+    mediaUrl:'/api/media?path='+encodeURIComponent(pathname),
     mediaOrigin:'',
     mediaPath:pathname,
     mediaType:contentType.startsWith('video/')?'video':'image'
