@@ -95,12 +95,18 @@ app.post('/api/blob/upload-url',auth,csrfGuard,async(req,res)=>{try{
   }
   const safeName=path.basename(fileName).replace(/[^a-zA-Z0-9._-]+/g,'-').replace(/^-+|-+$/g,'')||'file';
   const pathname=kind+'/'+Date.now()+'-'+crypto.randomBytes(8).toString('hex')+'-'+safeName;
+  const requestOidcToken=clean(req.headers['x-vercel-oidc-token'],5000)||clean(process.env.VERCEL_OIDC_TOKEN,5000);
+  if(!requestOidcToken){
+    throw new Error('Vercel OIDC token tidak tersedia di Function. Pastikan Secure Backend Access / OIDC aktif pada project Vercel dan Blob store sudah terhubung ke project ini.');
+  }
   const token=await issueSignedToken({
     pathname,
     operations:['put'],
     allowedContentTypes:[contentType],
     maximumSizeInBytes:kind==='logo'?5*1024*1024:100*1024*1024,
-    validUntil:Date.now()+15*60*1000
+    validUntil:Date.now()+15*60*1000,
+    oidcToken:requestOidcToken,
+    storeId
   });
   const signed=await presignUrl(token,{pathname,operation:'put',validUntil:Date.now()+15*60*1000});
   const storeId=String(process.env.BLOB_STORE_ID||'').replace(/^store_/,'');
