@@ -83,7 +83,7 @@ async function submitMediaForm(form,endpoint,kind,progressId){
   if(storageMode==='vercel-blob'){
     var media=await uploadBlob(file,kind,progressId);
     var body=Object.fromEntries(new FormData(form));delete body.media;
-    body.mediaUrl=media.mediaUrl;body.mediaType=media.mediaType;
+    body.mediaUrl=media.mediaUrl;body.mediaOrigin=media.mediaOrigin;body.mediaPath=media.mediaPath;body.mediaType=media.mediaType;
     var response=await api(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     setProgress(progressId,'Selesai.');
     return response;
