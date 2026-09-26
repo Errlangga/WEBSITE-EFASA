@@ -306,6 +306,19 @@ async function loadSite() {
   emailEl.href = email ? 'mailto:' + email : '#';
   emailEl.classList.toggle('disabled-link', !email);
 
+  var locationEl = document.getElementById('contactLocation');
+  var mapsLink = String(s.mapsLink || '').trim();
+  var locationUrl = '';
+  if (mapsLink) {
+    try {
+      var locationParsed = new URL(mapsLink, location.origin);
+      if (locationParsed.protocol === 'https:') locationUrl = locationParsed.href;
+    } catch (e) {}
+  }
+  locationEl.href = locationUrl || '#';
+  locationEl.classList.toggle('disabled-link', !locationUrl);
+  locationEl.setAttribute('aria-disabled', locationUrl ? 'false' : 'true');
+
   var logo = document.getElementById('siteLogo');
   var fallback = document.getElementById('logoFallback');
   var logoUrl = safeMediaUrl(s.logo);
