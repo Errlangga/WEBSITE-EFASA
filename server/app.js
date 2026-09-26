@@ -311,31 +311,41 @@ function localMedia(req){
   return '/uploads/'+filename;
 }
 async function saveItem(type,req,res){
-  let blobPath=clean(req.body?.mediaPath,1000);
-  while(blobPath.startsWith('/'))blobPath=blobPath.slice(1);
+  if(!req.file)return res.status(400).json({ok:false,message:'File foto/video wajib dipilih.'});
+
+  let media='';
+  let blobPath='';
 
   try{
-    const media=STORAGE_MODE==='local'
-      ? localMedia(req)
-      : resolveBlobMedia(req.body,type);
+    if(STORAGE_MODE==='local'){
+      media=localMedia(req);
+    }else{
+      const safeName=path.basename(req.file.originalname)
+        .replace(/[^a-zA-Z0-9._-]+/g,'-')
+        .replace(/^-+|-+$/g,'')||'file';
+      blobPath=type+'/'+Date.now()+'-'+crypto.randomBytes(8).toString('hex')+'-'+safeName;
 
-    if(!media){
-      if(STORAGE_MODE==='vercel-blob' && blobPath.startsWith(type+'/')){
-        try{await del(blobPath,{access:'private'});}catch(e){console.warn('Blob orphan cleanup:',e.message);}
-      }
-      console.warn('Invalid Blob media payload:',{
-        type,
-        mediaUrl:String(req.body?.mediaUrl||''),
-        mediaOrigin:String(req.body?.mediaOrigin||''),
-        mediaPath:blobPath,
-        mediaType:String(req.body?.mediaType||'')
+      const blob=await put(blobPath,req.file.buffer,{
+        access:'private',
+        contentType:req.file.mimetype,
+        addRandomSuffix:false
       });
-      return res.status(400).json({
-        ok:false,
-        message:'Media Blob tidak dapat diverifikasi. Upload ulang file dari dashboard.'
+
+      blobPath=clean(blob?.pathname||blobPath,1000).replace(/^\//,'');
+      if(!/^(portfolio|stock)\//.test(blobPath)){
+        throw new Error('Vercel Blob mengembalikan pathname media yang tidak valid.');
+      }
+
+      media='/api/media?path='+encodeURIComponent(blobPath);
+      console.info('Blob media upload success:',{
+        type,
+        pathname:blobPath,
+        size:req.file.size,
+        contentType:req.file.mimetype
       });
     }
 
+    if(!media)throw new Error('Media gagal disimpan.');
     const x={
       id:id(),
       itemType:type,
