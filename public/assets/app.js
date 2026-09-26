@@ -322,6 +322,7 @@ async function loadSite() {
 window.addEventListener('load', function() {
   document.getElementById('year').textContent = new Date().getFullYear();
   setupScrollMotion();
+  setupAirflowExperience();
   setupTypewriter();
   setupPointerParallax();
   setupTiltCards();
@@ -334,3 +335,25 @@ window.addEventListener('pointermove', function(event) {
   document.documentElement.style.setProperty('--mx', event.clientX + 'px');
   document.documentElement.style.setProperty('--my', event.clientY + 'px');
 });
+function setupAirflowExperience(){
+  var stage=document.querySelector('.airflow-stage');
+  var meter=document.getElementById('tempIndicator');
+  var core=document.getElementById('coolCoreValue');
+  if(!stage||!meter||!core)return;
+
+  function update(){
+    var rect=stage.getBoundingClientRect();
+    var viewport=window.innerHeight||1;
+    var progress=(viewport-rect.top)/(viewport+rect.height);
+    progress=Math.max(0,Math.min(1,progress));
+    var cool=Math.round(30-(progress*8));
+    core.textContent=cool+'°';
+    meter.style.top=(16+(1-progress)*68)+'%';
+    meter.style.background=progress>.55?'#8be6ff':'#ffb879';
+    meter.style.boxShadow=progress>.55?'0 0 0 5px rgba(139,230,255,.08),0 0 25px rgba(139,230,255,.55)':'0 0 0 5px rgba(255,184,121,.08),0 0 25px rgba(255,184,121,.35)';
+    stage.classList.toggle('cooling-active',progress>.25);
+  }
+  update();
+  window.addEventListener('scroll',update,{passive:true});
+  window.addEventListener('resize',update);
+}
