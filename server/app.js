@@ -303,7 +303,13 @@ app.post('/api/blob/upload-url',auth,csrfGuard,async(req,res)=>{try{
 }catch(e){console.error('Blob presign upload:',e);res.status(400).json({ok:false,message:e.message||'Gagal membuat URL upload Blob.'});}});
 app.post('/api/blob/upload',async(req,res)=>{try{const s=session(cookies(req.headers.cookie||'').efasa_admin);if(!s)return res.status(401).json({error:'Unauthorized'});const body=req.body&&typeof req.body==='object'?req.body:null;if(!body||typeof body.type!=='string'||!body.payload)throw new Error('Payload upload Blob tidak valid.');const uploadOptions={body,request:req,...(process.env.BLOB_READ_WRITE_TOKEN?{token:process.env.BLOB_READ_WRITE_TOKEN}:{}),onBeforeGenerateToken:async(_p,payloadRaw)=>{let p={};try{p=payloadRaw?JSON.parse(payloadRaw):{};}catch{throw new Error('Payload upload tidak valid.');}const kind=p.kind;if(!['logo','portfolio','stock'].includes(kind))throw new Error('Jenis upload tidak valid.');return{allowedContentTypes:kind==='logo'?['image/jpeg','image/png','image/webp']:Array.from(MIME),maximumSizeInBytes:kind==='logo'?5*1024*1024:100*1024*1024,addRandomSuffix:true,tokenPayload:JSON.stringify({kind,adminId:s.sub})};},onUploadCompleted:async()=>{}};const out=await handleUpload(uploadOptions);return res.status(200).json(out);}catch(e){console.error('Blob client upload:',e.message);return res.status(400).json({error:e.message||'Gagal membuat token upload.'});}});
 
-function localMedia(req){return req.file?`/uploads/${req.file.filename}`:'';}
+function localMedia(req){
+  if(!req.file?.buffer)return '';
+  const filename=`${Date.now()}-${crypto.randomBytes(7).toString('hex')}${path.extname(req.file.originalname).toLowerCase()}`;
+  const filePath=path.join(UPLOADS,filename);
+  fs.writeFileSync(filePath,req.file.buffer);
+  return '/uploads/'+filename;
+}
 async function saveItem(type,req,res){
   let blobPath=clean(req.body?.mediaPath,1000);
   while(blobPath.startsWith('/'))blobPath=blobPath.slice(1);
