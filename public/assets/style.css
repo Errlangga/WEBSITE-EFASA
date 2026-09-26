@@ -320,3 +320,173 @@ body:after{
   .cool-core span{font-size:40px}
   .temperature-meter{right:8px}
 }
+
+/* ===== EFASA MOBILE PERFORMANCE MODE ===== */
+@media (max-width: 760px), (pointer: coarse){
+  html{scroll-behavior:smooth}
+  body{
+    perspective:none;
+    -webkit-text-size-adjust:100%;
+  }
+  body:after{display:none}
+  .ambient{filter:blur(34px);opacity:.55}
+  .nav-wrap{
+    backdrop-filter:none;
+    -webkit-backdrop-filter:none;
+    background:rgba(6,17,32,.94);
+  }
+  .glass,.hero-card{
+    backdrop-filter:none;
+    -webkit-backdrop-filter:none;
+    background:linear-gradient(180deg,rgba(12,31,52,.96),rgba(8,23,39,.96));
+  }
+  .hero:before{filter:none;opacity:.75}
+  .reveal{
+    filter:none;
+    clip-path:none;
+    transform:translate3d(0,24px,0);
+    transition:
+      opacity .55s ease,
+      transform .55s cubic-bezier(.22,.61,.36,1);
+  }
+  .reveal.visible{transform:none}
+  .service-card,.media-card,.stock-card{
+    transform:none !important;
+    will-change:auto;
+  }
+  .service-card:before,.media-card:before,.stock-card:before,.hero-card:before{
+    display:none;
+  }
+  .hero-visual .orb{
+    animation:none;
+    will-change:auto;
+  }
+  .airflow-stage:before{
+    animation:none;
+    filter:none;
+    opacity:.45;
+  }
+  .airflow-ribbon{
+    animation:none;
+    filter:none;
+    opacity:.45;
+  }
+  .cool-core:before,.cool-core:after{
+    animation:none;
+  }
+  .process-card:after{display:none}
+  .btn:before{display:none}
+  .media-card img,.media-card video,.stock-card img,.stock-card video{
+    transition:none;
+  }
+  .media-card:hover img,.media-card:hover video,.stock-card:hover img,.stock-card:hover video{
+    transform:none;
+    filter:none;
+  }
+  .hero-copy,.hero-visual{will-change:auto}
+  .drag-rail{
+    scroll-behavior:smooth;
+    -webkit-overflow-scrolling:touch;
+  }
+}
+
+@media (max-width: 620px){
+  .container{width:calc(100% - 24px)}
+  .hero{
+    padding:44px 0 34px;
+    gap:24px;
+  }
+  h1{
+    font-size:clamp(40px,13vw,64px);
+    line-height:.98;
+  }
+  .hero-copy p{
+    font-size:15px;
+    line-height:1.65;
+  }
+  .typed-line{
+    max-width:100%;
+    overflow:hidden;
+    white-space:nowrap;
+    text-overflow:clip;
+  }
+  .hero-trust{
+    gap:8px;
+    margin-top:22px;
+  }
+  .hero-trust div{
+    flex:1 1 calc(50% - 8px);
+    min-width:0;
+  }
+  .hero-visual{
+    min-height:330px;
+  }
+  .hero-card{
+    width:100%;
+    max-width:390px;
+    padding:18px;
+    border-radius:22px;
+  }
+  .hero-logo-placeholder{
+    padding:17px;
+  }
+  .logo-frame,.logo-frame img,.logo-ring{
+    width:64px;
+    height:64px;
+  }
+  .hero-logo-placeholder strong{font-size:25px}
+  .section{padding:66px 0}
+  .section-heading{margin-bottom:26px}
+  .section-heading h2{font-size:clamp(31px,10vw,46px)}
+  .section-heading p{font-size:14px;line-height:1.65}
+  .airflow-stage{
+    min-height:690px;
+  }
+  .airflow-inner{
+    padding-top:60px;
+    padding-bottom:60px;
+  }
+  .kinetic-stack{
+    font-size:clamp(48px,16vw,76px);
+  }
+  .airflow-copy p{font-size:14px}
+  .cooling-display{height:290px}
+  .cool-core{width:150px;height:150px}
+  .cool-core span{font-size:34px}
+  .airflow-ribbon{width:300px;height:76px}
+  .temperature-meter{
+    right:5px;
+    transform:translateY(-50%) scale(.82);
+    transform-origin:right center;
+  }
+  .temp-track{height:190px}
+  .drag-hint{
+    margin-top:-6px;
+    margin-bottom:16px;
+    font-size:11px;
+  }
+  .service-grid.drag-rail > *{
+    width:84vw;
+    min-width:84vw;
+  }
+  .media-grid.drag-rail > *,.stock-grid.drag-rail > *{
+    width:84vw;
+    min-width:84vw;
+  }
+  .process-card{
+    width:82vw;
+    min-width:82vw;
+    min-height:230px;
+    padding:22px;
+  }
+  .process-card h3{
+    margin-top:34px;
+    font-size:25px;
+  }
+  .contact-box{padding:26px}
+  .footer{padding-bottom:92px}
+  .floating-wa{
+    width:54px;height:54px;
+    right:14px;bottom:14px;
+  }
+}
