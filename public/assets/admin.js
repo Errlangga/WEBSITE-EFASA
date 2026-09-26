@@ -1,7 +1,6 @@
 var $ = function(selector){ return document.querySelector(selector); };
 var csrfToken = '';
 var storageMode = 'local';
-var blobModulePromise;
 
 async function api(url, options) {
   options = options || {};
@@ -66,51 +65,6 @@ function mediaFallback(el){
 }
 
 
-async function uploadBlob(file,kind,progressId){
-  setProgress(progressId,'Menyiapkan upload...');
-
-  var clientModule;
-  try{
-    clientModule=await window.__efasaBlobClientPromise;
-  }catch(e){
-    throw new Error('Modul upload Vercel Blob gagal dimuat.');
-  }
-
-  if(!clientModule||typeof clientModule.upload!=='function'){
-    throw new Error('Modul upload Vercel Blob tidak tersedia.');
-  }
-
-  var safeName=String(file.name||'file')
-    .replace(/[^a-zA-Z0-9._-]+/g,'-')
-    .replace(/^-+|-+$/g,'')||'file';
-  var pathname=kind+'/'+Date.now()+'-'+Math.random().toString(16).slice(2)+'-'+safeName;
-
-  var uploaded=await clientModule.upload(pathname,file,{
-    access:'private',
-    contentType:file.type||'application/octet-stream',
-    handleUploadUrl:'/api/blob/upload',
-    clientPayload:JSON.stringify({kind:kind}),
-    multipart:file.size>4*1024*1024,
-    onUploadProgress:function(event){
-      if(event&&typeof event.percentage==='number'){
-        setProgress(progressId,'Upload '+Math.round(event.percentage)+'%');
-      }
-    }
-  });
-
-  if(!uploaded||!uploaded.pathname){
-    throw new Error('Vercel Blob tidak mengembalikan hasil upload yang valid.');
-  }
-
-  setProgress(progressId,'Upload tersimpan.');
-
-  return {
-    mediaUrl:uploaded.url||'',
-    mediaOrigin:'',
-    mediaPath:uploaded.pathname,
-    mediaType:String(uploaded.contentType||'').indexOf('video/')===0?'video':'image'
-  };
-}
 
 async function refresh(){
   var data = await api('/api/public');
