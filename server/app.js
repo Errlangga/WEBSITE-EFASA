@@ -100,6 +100,25 @@ function resolveBlobMedia(body,kind){
   return '/api/media?path='+encodeURIComponent(pathname);
 }
 
+async function verifyBlobMedia(body,kind){
+  const media=resolveBlobMedia(body,kind);
+  if(!media)return '';
+
+  try{
+    const parsed=new URL(media,'https://efasa.local');
+    const pathname=decodeURIComponent(parsed.searchParams.get('path')||'').replace(/^\//,'');
+    if(!pathname.startsWith(kind+'/'))return '';
+
+    const result=await get(pathname,{access:'private',useCache:false});
+    if(!result?.blob)return '';
+
+    return '/api/media?path='+encodeURIComponent(pathname);
+  }catch(e){
+    console.warn('Blob media verification failed:',e.message);
+    return '';
+  }
+}
+
 async function browserMediaUrl(url){
   const value=String(url||'');
   if(!value)return '';
@@ -311,7 +330,9 @@ function localMedia(req){
   return '/uploads/'+filename;
 }
 async function saveItem(type,req,res){
-  if(!req.file)return res.status(400).json({ok:false,message:'File foto/video wajib dipilih.'});
+  if(STORAGE_MODE==='local'&&!req.file){
+    return res.status(400).json({ok:false,message:'File foto/video wajib dipilih.'});
+  }
 
   let media='';
   let blobPath='';
@@ -319,7 +340,7 @@ async function saveItem(type,req,res){
   try{
     if(STORAGE_MODE==='local'){
       media=localMedia(req);
-    }else{
+    }else if(req.file){
       const safeName=path.basename(req.file.originalname)
         .replace(/[^a-zA-Z0-9._-]+/g,'-')
         .replace(/^-+|-+$/g,'')||'file';
@@ -337,12 +358,26 @@ async function saveItem(type,req,res){
       }
 
       media='/api/media?path='+encodeURIComponent(blobPath);
-      console.info('Blob media upload success:',{
+      console.info('Blob server upload success:',{
         type,
         pathname:blobPath,
         size:req.file.size,
         contentType:req.file.mimetype
       });
+    }else{
+      blobPath=clean(req.body?.mediaPath,1000).replace(/^\//,'');
+      media=await verifyBlobMedia(req.body,type);
+      if(!media){
+        if(blobPath.startsWith(type+'/')){
+          try{await del(blobPath,{access:'private'});}catch(cleanupError){
+            console.warn('Invalid client Blob cleanup:',cleanupError.message);
+          }
+        }
+        return res.status(400).json({
+          ok:false,
+          message:'Upload Blob selesai tetapi file tidak bisa diverifikasi. Upload ulang file.'
+        });
+      }
     }
 
     if(!media)throw new Error('Media gagal disimpan.');
