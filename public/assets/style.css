@@ -213,3 +213,110 @@ body:after{
   body:after{display:none}
   .reveal{filter:none;clip-path:none;transform:none;opacity:1}
 }
+
+/* ===== EFASA AIRFLOW EXPERIENCE ===== */
+.airflow-stage{
+  position:relative;
+  min-height:720px;
+  overflow:hidden;
+  border-top:1px solid rgba(255,255,255,.06);
+  border-bottom:1px solid rgba(255,255,255,.06);
+  background:
+    radial-gradient(circle at 78% 50%,rgba(8,124,245,.16),transparent 26%),
+    radial-gradient(circle at 12% 22%,rgba(255,184,94,.09),transparent 24%),
+    linear-gradient(180deg,#0b1a2c,#071321);
+  transition:background 1s ease,filter 1s ease;
+}
+.airflow-stage.cooling-active{
+  background:
+    radial-gradient(circle at 78% 50%,rgba(53,190,255,.19),transparent 28%),
+    radial-gradient(circle at 12% 22%,rgba(8,124,245,.14),transparent 26%),
+    linear-gradient(180deg,#061a2d,#04111f);
+}
+.airflow-stage:before{
+  content:"";
+  position:absolute;inset:-25%;
+  background:
+    conic-gradient(from 0deg at 65% 50%,transparent,rgba(101,215,255,.075),transparent 22% 48%,rgba(8,124,245,.075),transparent 68%);
+  filter:blur(35px);
+  animation:airflowSpin 18s linear infinite;
+  pointer-events:none;
+}
+@keyframes airflowSpin{to{transform:rotate(360deg)}}
+.airflow-inner{min-height:720px;display:grid;grid-template-columns:1.05fr .95fr;align-items:center;gap:40px}
+.airflow-copy{position:relative;z-index:2;max-width:650px}
+.airflow-copy p{max-width:560px;color:var(--muted);line-height:1.8;font-size:16px}
+.kinetic-stack{margin:16px 0 26px;display:flex;flex-direction:column;line-height:.83;letter-spacing:-.075em;font-size:clamp(64px,9vw,132px);font-weight:950;perspective:900px}
+.kinetic-stack span{
+  display:block;
+  opacity:.14;
+  transform:translate3d(-44px,28px,0) rotateX(25deg);
+  transition:transform 1s var(--motion-ease),opacity 1s var(--motion-ease);
+}
+.airflow-stage.cooling-active .kinetic-stack span:nth-child(1){opacity:.9;transform:translate3d(0,0,0) rotateX(0)}
+.airflow-stage.cooling-active .kinetic-stack span:nth-child(2){opacity:.72;transform:translate3d(18px,0,0) rotateX(0);transition-delay:.12s}
+.airflow-stage.cooling-active .kinetic-stack span:nth-child(3){opacity:1;transform:translate3d(36px,0,0) rotateX(0);transition-delay:.24s;color:#83ddff}
+.cooling-display{height:520px;position:relative;display:grid;place-items:center}
+.cool-core{
+  position:relative;z-index:3;width:210px;height:210px;border-radius:50%;
+  display:grid;place-items:center;align-content:center;
+  border:1px solid rgba(130,225,255,.28);
+  background:radial-gradient(circle,rgba(96,211,255,.18),rgba(8,124,245,.045) 58%,rgba(255,255,255,.02));
+  box-shadow:0 0 90px rgba(80,192,255,.18),inset 0 0 70px rgba(80,192,255,.08);
+  backdrop-filter:blur(20px);
+}
+.cool-core:before,.cool-core:after{
+  content:"";position:absolute;inset:-18px;border-radius:50%;border:1px solid rgba(101,215,255,.1);
+  animation:corePulse 3.8s ease-in-out infinite;
+}
+.cool-core:after{inset:-42px;border-color:rgba(101,215,255,.05);animation-delay:-1.4s}
+@keyframes corePulse{50%{transform:scale(1.05);opacity:.55}}
+.cool-core span{font-size:48px;font-weight:900;letter-spacing:-.06em}
+.cool-core small{font-size:10px;letter-spacing:.18em;color:#84d9ff;margin-top:4px}
+.airflow-ribbon{position:absolute;width:370px;height:95px;border:2px solid rgba(121,222,255,.24);border-left-color:transparent;border-bottom-color:transparent;border-radius:50%;filter:blur(.15px);transform:rotate(-16deg);animation:ribbonDrift 7s ease-in-out infinite}
+.ribbon-a{right:-10px;top:85px}
+.ribbon-b{right:-60px;top:220px;opacity:.65;transform:rotate(-9deg) scale(.88);animation-delay:-2s}
+.ribbon-c{right:10px;bottom:65px;opacity:.4;transform:rotate(8deg) scale(.72);animation-delay:-4s}
+@keyframes ribbonDrift{50%{transform:translate3d(-24px,16px,0) rotate(-12deg) scale(1.03)}}
+.temperature-meter{
+  position:absolute;right:28px;top:50%;transform:translateY(-50%);
+  display:flex;flex-direction:column;align-items:center;gap:10px;z-index:4;
+}
+.temp-label{font-size:9px;letter-spacing:.18em;font-weight:900}
+.temp-cold{color:#7ddcff}.temp-hot{color:#ffbd78}
+.temp-track{position:relative;width:6px;height:240px;border-radius:999px;background:linear-gradient(#4bcfff,#1c76f4,#ff9a5b);box-shadow:0 0 20px rgba(80,192,255,.18)}
+.temp-track i{
+  position:absolute;left:50%;top:78%;transform:translate(-50%,-50%);
+  width:18px;height:18px;border-radius:50%;background:#8be6ff;
+  box-shadow:0 0 0 5px rgba(139,230,255,.08),0 0 25px rgba(139,230,255,.55);
+  transition:top .7s var(--motion-ease),background .7s ease,box-shadow .7s ease;
+}
+.process-section{padding-top:90px}
+.process-rail{margin-top:8px}
+.process-card{
+  width:310px;min-height:270px;padding:26px;border-radius:24px;
+  border:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));
+  position:relative;overflow:hidden;
+}
+.process-card:after{
+  content:"";position:absolute;right:-40px;bottom:-40px;width:160px;height:160px;border-radius:50%;
+  background:radial-gradient(circle,rgba(80,192,255,.14),transparent 68%);
+}
+.process-index{font-size:11px;letter-spacing:.18em;color:#74d5ff;font-weight:900}
+.process-card h3{font-size:28px;margin:44px 0 10px}
+.process-card p{color:var(--muted);line-height:1.75;margin:0}
+.process-rail > .process-card{scroll-snap-align:center}
+@media(max-width:900px){
+  .airflow-inner{grid-template-columns:1fr;padding-top:80px;padding-bottom:80px}
+  .airflow-stage,.airflow-inner{min-height:auto}
+  .cooling-display{height:380px}
+  .temperature-meter{right:14px}
+}
+@media(max-width:620px){
+  .airflow-stage{min-height:780px}
+  .kinetic-stack{font-size:clamp(54px,18vw,90px)}
+  .cooling-display{height:330px}
+  .cool-core{width:170px;height:170px}
+  .cool-core span{font-size:40px}
+  .temperature-meter{right:8px}
+}
