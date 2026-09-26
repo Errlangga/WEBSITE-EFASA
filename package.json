@@ -1,6 +1,6 @@
 {
   "name": "website-efasa",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "private": true,
   "description": "EFASA TEKNIK - website jasa service AC dengan admin, Neon Postgres, Vercel Blob, dan Vercel support.",
   "main": "server.js",
