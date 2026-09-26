@@ -149,15 +149,33 @@ function renderList(id,items,type){
 
 async function submitMediaForm(form,endpoint,kind,progressId){
   var file=form.querySelector('input[type="file"]').files[0];
-  if(!file) throw new Error('File wajib dipilih.');
+  if(!file)throw new Error('File wajib dipilih.');
 
-  setProgress(progressId,'Mengupload ke server...');
-  var response=await api(endpoint,{
+  if(storageMode==='vercel-blob'){
+    var media=await uploadBlob(file,kind,progressId);
+    var body=Object.fromEntries(new FormData(form));
+    delete body.media;
+    body.mediaUrl=media.mediaUrl;
+    body.mediaOrigin=media.mediaOrigin;
+    body.mediaPath=media.mediaPath;
+    body.mediaType=media.mediaType;
+
+    var response=await api(endpoint,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)
+    });
+    setProgress(progressId,'Selesai.');
+    return response;
+  }
+
+  setProgress(progressId,'Mengupload...');
+  var localResponse=await api(endpoint,{
     method:'POST',
     body:new FormData(form)
   });
   setProgress(progressId,'Selesai.');
-  return response;
+  return localResponse;
 }
 
 async function boot(){
