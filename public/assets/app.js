@@ -41,6 +41,10 @@ function safeMediaUrl(url) {
 
 var motionState = {
   reduce: window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  mobile: window.matchMedia && (
+    window.matchMedia('(max-width: 760px)').matches ||
+    window.matchMedia('(pointer: coarse)').matches
+  ),
   raf: 0,
   px: 0, py: 0,
   targetX: 0, targetY: 0
@@ -86,18 +90,26 @@ function setupTypewriter() {
 function setupScrollMotion() {
   var bar = document.getElementById('scrollProgress');
   var nav = document.querySelector('.nav-wrap');
+  var ticking = false;
   function update() {
     var max = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
     var progress = Math.min(100, Math.max(0, window.scrollY / max * 100));
     if (bar) bar.style.width = progress + '%';
     if (nav) nav.classList.toggle('scrolled', window.scrollY > 20);
+    ticking = false;
+  }
+  function requestUpdate() {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(update);
   }
   update();
-  window.addEventListener('scroll', update, { passive: true });
+  window.addEventListener('scroll', requestUpdate, { passive: true });
+  window.addEventListener('resize', requestUpdate, { passive: true });
 }
 
 function setupPointerParallax() {
-  if (motionState.reduce) return;
+  if (motionState.reduce || motionState.mobile) return;
   var heroVisual = document.querySelector('.hero-visual');
   var heroCopy = document.querySelector('.hero-copy');
   var card = document.querySelector('.hero-card');
@@ -147,6 +159,7 @@ function setupTiltCards() {
 }
 
 function setupDragRails() {
+  if (motionState.mobile) return;
   document.querySelectorAll('[data-drag-rail]').forEach(function(track) {
     var pressed = false, startX = 0, startScroll = 0, moved = false;
     track.addEventListener('pointerdown', function(event) {
@@ -341,6 +354,7 @@ function setupAirflowExperience(){
   var core=document.getElementById('coolCoreValue');
   if(!stage||!meter||!core)return;
 
+  var ticking=false;
   function update(){
     var rect=stage.getBoundingClientRect();
     var viewport=window.innerHeight||1;
@@ -352,8 +366,14 @@ function setupAirflowExperience(){
     meter.style.background=progress>.55?'#8be6ff':'#ffb879';
     meter.style.boxShadow=progress>.55?'0 0 0 5px rgba(139,230,255,.08),0 0 25px rgba(139,230,255,.55)':'0 0 0 5px rgba(255,184,121,.08),0 0 25px rgba(255,184,121,.35)';
     stage.classList.toggle('cooling-active',progress>.25);
+    ticking=false;
+  }
+  function requestUpdate(){
+    if(ticking)return;
+    ticking=true;
+    requestAnimationFrame(update);
   }
   update();
-  window.addEventListener('scroll',update,{passive:true});
-  window.addEventListener('resize',update);
+  window.addEventListener('scroll',requestUpdate,{passive:true});
+  window.addEventListener('resize',requestUpdate,{passive:true});
 }
