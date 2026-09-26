@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { neon } = require('@neondatabase/serverless');
-const { put, del, issueSignedToken, presignUrl } = require('@vercel/blob');
+const { put, get, del, issueSignedToken, presignUrl } = require('@vercel/blob');
 const { handleUpload } = require('@vercel/blob/client');
 
 const app = express();
@@ -105,12 +105,11 @@ async function browserMediaUrl(url){
     try{
       const parsed=new URL(value,'https://efasa.local');
       pathname=clean(parsed.searchParams.get('path')||'',1000);
-      pathname=decodeURIComponent(pathname).replace(/^\//,'');
     }catch{}
   }else{
     try{
       const u=new URL(value);
-      const validHost=u.protocol==='https:'&&
+      const validHost=u.protocol==='https:' &&
         (u.hostname==='blob.vercel-storage.com'||/\.blob\.vercel-storage\.com$/i.test(u.hostname));
       if(!validHost)return '';
       pathname=decodeURIComponent(u.pathname.replace(/^\//,''));
@@ -120,28 +119,9 @@ async function browserMediaUrl(url){
     }
   }
 
+  pathname=decodeURIComponent(String(pathname||'')).replace(/^\//,'');
   if(!/^(logo|portfolio|stock)\//.test(pathname))return '';
-
-  try{
-    const validUntil=Date.now()+24*60*60*1000;
-    const signedToken=await issueSignedToken({
-      pathname,
-      operations:['get'],
-      validUntil
-    });
-    const signed=await presignUrl(signedToken,{
-      pathname,
-      operation:'get',
-      access:'private',
-      validUntil,
-      useCache:false
-    });
-    if(!signed?.presignedUrl)return '';
-    return signed.presignedUrl;
-  }catch(e){
-    console.error('Blob signed read URL:',e.message);
-    return '';
-  }
+  return '/api/media?path='+encodeURIComponent(pathname);
 }
 
 async function ready(){if(!USE_POSTGRES)return;if(!schemaReady){schemaReady=(async()=>{await sql`CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)`;await sql`CREATE TABLE IF NOT EXISTS admins(id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;await sql`CREATE TABLE IF NOT EXISTS media_items(id TEXT PRIMARY KEY,item_type TEXT NOT NULL CHECK(item_type IN ('portfolio','stock')),title TEXT,location TEXT,service TEXT,name TEXT,brand TEXT,capacity TEXT,price TEXT,description TEXT,media_url TEXT NOT NULL,media_type TEXT NOT NULL CHECK(media_type IN ('image','video')),created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;await sql`CREATE INDEX IF NOT EXISTS media_items_type_idx ON media_items(item_type,created_at DESC)`;for(const [k,v] of Object.entries(DEFAULT_SETTINGS))await sql`INSERT INTO settings(key,value) VALUES(${k},${v}) ON CONFLICT(key) DO NOTHING`;})().catch(e=>{schemaReady=null;throw e;});}await schemaReady;}
@@ -180,11 +160,39 @@ app.use(express.urlencoded({extended:true,limit:'300kb'}));
 app.use(express.static(PUBLIC,{extensions:['html']}));
 
 app.get('/api/media',async(req,res)=>{
-  try{
-    const pathname=clean(req.query?.path,1000).replace(/^\//,'');
-    if(!/^(logo|portfolio|stock)\//.test(pathname))return res.status(400).send('Media tidak valid.');
+  const pathname=clean(req.query?.path,1000).replace(/^\//,'');
+  if(!/^(logo|portfolio|stock)\//.test(pathname))return res.status(400).send('Media tidak valid.');
 
-    const validUntil=Date.now()+24*60*60*1000;
+  try{
+    let result=null;
+    try{
+      result=await get(pathname,{access:'private',useCache:false});
+    }catch(e){
+      console.warn('Blob get failed, fallback to signed URL:',e.message);
+    }
+
+    if(result?.blob && result?.stream){
+      res.statusCode=200;
+      res.setHeader('Content-Type',result.blob.contentType||'application/octet-stream');
+      res.setHeader('Cache-Control','public, max-age=300, s-maxage=300, stale-while-revalidate=3600');
+      if(result.blob.size!=null)res.setHeader('Content-Length',String(result.blob.size));
+      if(typeof result.stream.pipe==='function'){
+        result.stream.pipe(res);
+        return;
+      }
+      if(typeof result.stream.getReader==='function'){
+        const reader=result.stream.getReader();
+        while(true){
+          const chunk=await reader.read();
+          if(chunk.done)break;
+          res.write(Buffer.from(chunk.value));
+        }
+        res.end();
+        return;
+      }
+    }
+
+    const validUntil=Date.now()+10*60*1000;
     const signedToken=await issueSignedToken({
       pathname,
       operations:['get'],
@@ -197,14 +205,13 @@ app.get('/api/media',async(req,res)=>{
       validUntil,
       useCache:false
     });
-
     if(!signed?.presignedUrl)return res.status(404).send('Media tidak ditemukan.');
     return res.redirect(302,signed.presignedUrl);
   }catch(e){
-    console.error('Blob media redirect:',e.message);
+    console.error('Blob media proxy:',e.message);
     return res.status(e.statusCode||500).send('Media tidak dapat dimuat.');
   }
-});
+});;
 
 app.get('/api/health',async(_req,res)=>{const hasDatabaseUrl=Boolean(process.env.DATABASE_URL);try{await settings();res.json({ok:true,database:'postgres',storage:STORAGE_MODE,node:process.version,hasDatabaseUrl});}catch(e){res.status(e.statusCode||500).json({ok:false,database:PERSISTENCE_MODE,storage:STORAGE_MODE,node:process.version,hasDatabaseUrl,message:e.message});}});
 app.get('/api/public',async(_req,res)=>{try{
