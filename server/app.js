@@ -194,7 +194,7 @@ app.get('/api/media',async(req,res)=>{
 
     const validUntil=Date.now()+10*60*1000;
     const signedToken=await issueSignedToken({pathname,operations:['get'],validUntil});
-    const signed=await presignUrl(token,{
+    const signed=await presignUrl(signedToken,{
       pathname,
       operation:'get',
       access:'private',
