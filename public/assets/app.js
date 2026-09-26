@@ -321,6 +321,11 @@ async function loadSite() {
 
 window.addEventListener('load', function() {
   document.getElementById('year').textContent = new Date().getFullYear();
+  setupScrollMotion();
+  setupTypewriter();
+  setupPointerParallax();
+  setupTiltCards();
+  setupMagneticButtons();
   loadSite().catch(function(error){ console.error(error); });
   bindReveal();
 });
