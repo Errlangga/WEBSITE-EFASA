@@ -387,6 +387,10 @@ body:after{
   .drag-rail{
     scroll-behavior:smooth;
     -webkit-overflow-scrolling:touch;
+    touch-action:auto;
+    overscroll-behavior-x:contain;
+    overflow-x:auto;
+    cursor:default;
   }
 }
 
