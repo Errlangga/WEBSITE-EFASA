@@ -20,23 +20,42 @@ function esc(value) {
 }
 function setProgress(id,text){ var el=document.getElementById(id); if(el) el.textContent=text||''; }
 function adminMediaUrl(url){
-  var value=String(url||'');
+  var value=String(url||'').trim();
   if(!value)return '';
   if(value.indexOf('/uploads/')===0)return value;
-  if(value.indexOf('/api/media?path=')===0)return value;
 
   try{
     var parsed=new URL(value,location.origin);
-    var validBlob=parsed.protocol==='https:' &&
-      (parsed.hostname==='blob.vercel-storage.com'||/\.blob\.vercel-storage\.com$/i.test(parsed.hostname));
-    if(!validBlob)return '';
 
-    var pathname=decodeURIComponent(parsed.pathname.replace(/^\//,''));
-    if(!/^(logo|portfolio|stock)\//.test(pathname))return '';
-    return '/api/media?path='+encodeURIComponent(pathname);
-  }catch(e){
-    return '';
+    if(parsed.pathname==='/api/media'){
+      var proxyPath=parsed.searchParams.get('path')||'';
+      proxyPath=decodeURIComponent(proxyPath).replace(/^\//,'');
+      if(/^(logo|portfolio|stock)\//.test(proxyPath)){
+        return '/api/media?path='+encodeURIComponent(proxyPath);
+      }
+      return '';
+    }
+
+    if(parsed.protocol==='https:' &&
+      (parsed.hostname==='blob.vercel-storage.com'||/\.blob\.vercel-storage\.com$/i.test(parsed.hostname))){
+      var pathname=decodeURIComponent(parsed.pathname.replace(/^\//,''));
+      if(/^(logo|portfolio|stock)\//.test(pathname)){
+        return '/api/media?path='+encodeURIComponent(pathname);
+      }
+      return '';
+    }
+
+    var raw=parsed.pathname.replace(/^\//,'');
+    if(/^(logo|portfolio|stock)\//.test(raw)){
+      return '/api/media?path='+encodeURIComponent(raw);
+    }
+  }catch(e){}
+
+  var direct=value.replace(/^\//,'');
+  if(/^(logo|portfolio|stock)\//.test(direct)){
+    return '/api/media?path='+encodeURIComponent(direct);
   }
+  return '';
 }
 
 function mediaFallback(el){
