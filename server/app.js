@@ -370,21 +370,26 @@ async function saveItem(type,req,res){
     try{
       await insertMedia(x);
     }catch(e){
-      if(STORAGE_MODE==='vercel-blob'){
-        try{await del(media,{access:'private'});}catch(cleanupError){console.warn('Blob DB failure cleanup:',cleanupError.message);}
+      if(STORAGE_MODE==='vercel-blob'&&blobPath){
+        try{await del(blobPath,{access:'private'});}catch(cleanupError){
+          console.warn('Blob DB failure cleanup:',cleanupError.message);
+        }
+      }else if(STORAGE_MODE==='local'&&media){
+        try{await removeFile(media);}catch(cleanupError){
+          console.warn('Local media DB cleanup:',cleanupError.message);
+        }
       }
       throw e;
     }
 
     res.json({ok:true,item:x});
   }catch(e){
-    if(req.file?.path&&fs.existsSync(req.file.path))fs.unlinkSync(req.file.path);
     console.error('Save media item:',e);
     res.status(e.statusCode||500).json({ok:false,message:e.message||'Gagal menyimpan media.'});
   }
 }
-app.post('/api/admin/portfolio',auth,csrfGuard,localUpload.single('media'),(req,res)=>saveItem('portfolio',req,res));
-app.post('/api/admin/stock',auth,csrfGuard,localUpload.single('media'),(req,res)=>saveItem('stock',req,res));
+app.post('/api/admin/portfolio',auth,csrfGuard,mediaUpload.single('media'),(req,res)=>saveItem('portfolio',req,res));
+app.post('/api/admin/stock',auth,csrfGuard,mediaUpload.single('media'),(req,res)=>saveItem('stock',req,res));
 app.post('/api/admin/logo',auth,csrfGuard,logoUpload.single('media'),async(req,res)=>{
   try{
     if(!req.file)return res.status(400).json({ok:false,message:'File logo wajib dipilih.'});
