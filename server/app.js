@@ -99,22 +99,47 @@ async function browserMediaUrl(url){
   const value=String(url||'');
   if(!value)return '';
   if(value.startsWith('/uploads/'))return value;
+
+  let pathname='';
   if(value.startsWith('/api/media?path=')){
-    const pathname=clean(value.split('?path=')[1]||'',1000);
-    if(/^(logo|portfolio|stock)%2F/.test(pathname)||/^(logo|portfolio|stock)\//.test(pathname)){
-      return value;
+    try{
+      const parsed=new URL(value,'https://efasa.local');
+      pathname=clean(parsed.searchParams.get('path')||'',1000);
+      pathname=decodeURIComponent(pathname).replace(/^\//,'');
+    }catch{}
+  }else{
+    try{
+      const u=new URL(value);
+      const validHost=u.protocol==='https:'&&
+        (u.hostname==='blob.vercel-storage.com'||/\.blob\.vercel-storage\.com$/i.test(u.hostname));
+      if(!validHost)return '';
+      pathname=decodeURIComponent(u.pathname.replace(/^\//,''));
+    }catch(e){
+      console.error('Blob media URL:',e.message);
+      return '';
     }
-    return '';
   }
+
+  if(!/^(logo|portfolio|stock)\//.test(pathname))return '';
+
   try{
-    const u=new URL(value);
-    const validHost=u.protocol==='https:'&&(u.hostname==='blob.vercel-storage.com'||/\.blob\.vercel-storage\.com$/i.test(u.hostname));
-    if(!validHost)return '';
-    const pathname=decodeURIComponent(u.pathname.replace(/^\//,''));
-    if(!/^(logo|portfolio|stock)\//.test(pathname))return '';
-    return '/api/media?path='+encodeURIComponent(pathname);
+    const validUntil=Date.now()+24*60*60*1000;
+    const signedToken=await issueSignedToken({
+      pathname,
+      operations:['get'],
+      validUntil
+    });
+    const signed=await presignUrl(signedToken,{
+      pathname,
+      operation:'get',
+      access:'private',
+      validUntil,
+      useCache:false
+    });
+    if(!signed?.presignedUrl)return '';
+    return signed.presignedUrl;
   }catch(e){
-    console.error('Blob media URL:',e.message);
+    console.error('Blob signed read URL:',e.message);
     return '';
   }
 }
