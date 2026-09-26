@@ -38,6 +38,168 @@ function safeMediaUrl(url) {
   return '';
 }
 
+
+var motionState = {
+  reduce: window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  raf: 0,
+  px: 0, py: 0,
+  targetX: 0, targetY: 0
+};
+
+function setupTypewriter() {
+  var el = document.getElementById('typedLine');
+  if (!el || motionState.reduce) return;
+  var phrases = [
+    'Perawatan AC',
+    'Perbaikan AC',
+    'Pasang Baru & Reposisi',
+    'AHU • Chiller • VRF',
+    'Rumahan • Perkantoran • Industrial'
+  ];
+  var index = 0, pos = 0, deleting = false;
+  function tick() {
+    var phrase = phrases[index];
+    if (!deleting) {
+      pos += 1;
+      el.textContent = phrase.slice(0, pos);
+      if (pos >= phrase.length) {
+        deleting = true;
+        setTimeout(tick, 1250);
+        return;
+      }
+      setTimeout(tick, 58);
+      return;
+    }
+    pos -= 1;
+    el.textContent = phrase.slice(0, Math.max(0, pos));
+    if (pos <= 0) {
+      deleting = false;
+      index = (index + 1) % phrases.length;
+      setTimeout(tick, 280);
+      return;
+    }
+    setTimeout(tick, 32);
+  }
+  tick();
+}
+
+function setupScrollMotion() {
+  var bar = document.getElementById('scrollProgress');
+  var nav = document.querySelector('.nav-wrap');
+  function update() {
+    var max = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
+    var progress = Math.min(100, Math.max(0, window.scrollY / max * 100));
+    if (bar) bar.style.width = progress + '%';
+    if (nav) nav.classList.toggle('scrolled', window.scrollY > 20);
+  }
+  update();
+  window.addEventListener('scroll', update, { passive: true });
+}
+
+function setupPointerParallax() {
+  if (motionState.reduce) return;
+  var heroVisual = document.querySelector('.hero-visual');
+  var heroCopy = document.querySelector('.hero-copy');
+  var card = document.querySelector('.hero-card');
+  var orbs = document.querySelectorAll('.hero-visual .orb');
+  window.addEventListener('pointermove', function(event) {
+    var x = event.clientX / Math.max(1, window.innerWidth) - .5;
+    var y = event.clientY / Math.max(1, window.innerHeight) - .5;
+    motionState.targetX = x;
+    motionState.targetY = y;
+    document.documentElement.style.setProperty('--cursor-x', event.clientX + 'px');
+    document.documentElement.style.setProperty('--cursor-y', event.clientY + 'px');
+    if (heroVisual) heroVisual.style.transform = 'translate3d(' + (x * -7).toFixed(1) + 'px,' + (y * -7).toFixed(1) + 'px,0)';
+    if (heroCopy) heroCopy.style.transform = 'translate3d(' + (x * 3).toFixed(1) + 'px,' + (y * 3).toFixed(1) + 'px,0)';
+    if (card) {
+      card.style.setProperty('--tilt-x', (x * -10).toFixed(2) + 'px');
+      card.style.setProperty('--tilt-y', (y * -10).toFixed(2) + 'px');
+      card.style.transform = 'rotateX(' + (y * -3.5).toFixed(2) + 'deg) rotateY(' + (x * 4).toFixed(2) + 'deg) translate3d(' + (x * -9).toFixed(1) + 'px,' + (y * -9).toFixed(1) + 'px,0)';
+    }
+    orbs.forEach(function(orb, i) {
+      var depth = (i + 1) * 8;
+      orb.style.transform = 'translate3d(' + (x * depth).toFixed(1) + 'px,' + (y * depth).toFixed(1) + 'px,0)';
+    });
+  });
+}
+
+function setupTiltCards() {
+  if (motionState.reduce || !window.matchMedia('(pointer:fine)').matches) return;
+  document.addEventListener('pointermove', function(event) {
+    var card = event.target.closest('.service-card,.media-card,.stock-card');
+    if (!card) return;
+    var rect = card.getBoundingClientRect();
+    var px = (event.clientX - rect.left) / rect.width;
+    var py = (event.clientY - rect.top) / rect.height;
+    var ry = ((px - .5) * 7).toFixed(2);
+    var rx = ((.5 - py) * 6).toFixed(2);
+    card.style.setProperty('--rx', rx + 'deg');
+    card.style.setProperty('--ry', ry + 'deg');
+    card.style.setProperty('--shine-x', (px * 100).toFixed(1) + '%');
+    card.style.setProperty('--shine-y', (py * 100).toFixed(1) + '%');
+  });
+  document.addEventListener('pointerout', function(event) {
+    var card = event.target.closest('.service-card,.media-card,.stock-card');
+    if (!card || card.contains(event.relatedTarget)) return;
+    card.style.setProperty('--rx', '0deg');
+    card.style.setProperty('--ry', '0deg');
+  });
+}
+
+function setupDragRails() {
+  document.querySelectorAll('[data-drag-rail]').forEach(function(track) {
+    var pressed = false, startX = 0, startScroll = 0, moved = false;
+    track.addEventListener('pointerdown', function(event) {
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      pressed = true; moved = false; startX = event.clientX; startScroll = track.scrollLeft;
+      track.classList.add('dragging');
+      try { track.setPointerCapture(event.pointerId); } catch (_) {}
+    });
+    track.addEventListener('pointermove', function(event) {
+      if (!pressed) return;
+      var dx = event.clientX - startX;
+      if (Math.abs(dx) > 4) moved = true;
+      if (moved) track.scrollLeft = startScroll - dx;
+    });
+    var release = function(event) {
+      if (!pressed) return;
+      pressed = false;
+      track.classList.remove('dragging');
+      try { track.releasePointerCapture(event.pointerId); } catch (_) {}
+    };
+    track.addEventListener('pointerup', release);
+    track.addEventListener('pointercancel', release);
+    track.addEventListener('mouseleave', function(){ if (pressed) { pressed = false; track.classList.remove('dragging'); } });
+    track.addEventListener('click', function(event) {
+      if (moved) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    }, true);
+  });
+}
+
+function setupMagneticButtons() {
+  if (motionState.reduce || !window.matchMedia('(pointer:fine)').matches) return;
+  document.querySelectorAll('.btn,.floating-wa').forEach(function(btn) {
+    btn.addEventListener('pointermove', function(event) {
+      var rect = btn.getBoundingClientRect();
+      var x = (event.clientX - rect.left) / rect.width - .5;
+      var y = (event.clientY - rect.top) / rect.height - .5;
+      btn.style.transform = 'translate(' + (x * 5).toFixed(1) + 'px,' + (y * 5).toFixed(1) + 'px)';
+    });
+    btn.addEventListener('pointerleave', function() {
+      btn.style.transform = '';
+    });
+  });
+}
+
+function applyRevealStagger() {
+  document.querySelectorAll('.service-card,.media-card,.stock-card').forEach(function(card, index) {
+    card.setAttribute('data-reveal-delay', String((index % 4) + 1));
+  });
+}
+
 function waUrl(number, text) {
   var clean = String(number || '').replace(/\D/g, '');
   var message = text || 'Halo EFASA TEKNIK, saya ingin konsultasi service AC.';
@@ -92,6 +254,7 @@ function renderStock(items) {
 
 var observer;
 function bindReveal() {
+  applyRevealStagger();
   if (!observer) {
     observer = new IntersectionObserver(function(entries) {
       entries.forEach(function(entry) {
@@ -99,7 +262,7 @@ function bindReveal() {
         entry.target.classList.add('visible');
         observer.unobserve(entry.target);
       });
-    }, { threshold: 0.12 });
+    }, { threshold: 0.08, rootMargin: '0px 0px -6% 0px' });
   }
   document.querySelectorAll('.reveal:not(.visible)').forEach(function(el) { observer.observe(el); });
 }
@@ -140,6 +303,8 @@ async function loadSite() {
   renderPortfolio(data.portfolio || []);
   renderStock(data.stock || []);
   bindReveal();
+  setupDragRails();
+  setupTiltCards();
 
   var stockId = new URLSearchParams(location.search).get('stock');
   if (stockId) {
