@@ -320,7 +320,60 @@ app.post('/api/blob/upload-url',auth,csrfGuard,async(req,res)=>{try{
     mediaType:contentType.startsWith('video/')?'video':'image'
   });
 }catch(e){console.error('Blob presign upload:',e);res.status(400).json({ok:false,message:e.message||'Gagal membuat URL upload Blob.'});}});
-app.post('/api/blob/upload',async(req,res)=>{try{const s=session(cookies(req.headers.cookie||'').efasa_admin);if(!s)return res.status(401).json({error:'Unauthorized'});const body=req.body&&typeof req.body==='object'?req.body:null;if(!body||typeof body.type!=='string'||!body.payload)throw new Error('Payload upload Blob tidak valid.');const uploadOptions={body,request:req,...(process.env.BLOB_READ_WRITE_TOKEN?{token:process.env.BLOB_READ_WRITE_TOKEN}:{}),onBeforeGenerateToken:async(_p,payloadRaw)=>{let p={};try{p=payloadRaw?JSON.parse(payloadRaw):{};}catch{throw new Error('Payload upload tidak valid.');}const kind=p.kind;if(!['logo','portfolio','stock'].includes(kind))throw new Error('Jenis upload tidak valid.');return{allowedContentTypes:kind==='logo'?['image/jpeg','image/png','image/webp']:Array.from(MIME),maximumSizeInBytes:kind==='logo'?5*1024*1024:100*1024*1024,addRandomSuffix:true,tokenPayload:JSON.stringify({kind,adminId:s.sub})};},onUploadCompleted:async()=>{}};const out=await handleUpload(uploadOptions);return res.status(200).json(out);}catch(e){console.error('Blob client upload:',e.message);return res.status(400).json({error:e.message||'Gagal membuat token upload.'});}});
+app.post('/api/blob/upload',auth,async(req,res)=>{
+  try{
+    const body=req.body&&typeof req.body==='object'?req.body:null;
+    if(!body||typeof body.type!=='string'){
+      throw new Error('Payload upload Blob tidak valid.');
+    }
+
+    const out=await handleUpload({
+      body,
+      request:req,
+      onBeforeGenerateToken:async(pathname,clientPayload,multipart)=>{
+        let payload={};
+        try{
+          payload=clientPayload?JSON.parse(clientPayload):{};
+        }catch{
+          throw new Error('Payload client Blob tidak valid.');
+        }
+
+        const kind=clean(payload.kind,20);
+        if(!['portfolio','stock'].includes(kind)){
+          throw new Error('Jenis media Blob tidak valid.');
+        }
+
+        if(!pathname.startsWith(kind+'/')){
+          throw new Error('Path media Blob tidak valid.');
+        }
+
+        return {
+          allowedContentTypes:Array.from(MIME),
+          maximumSizeInBytes:100*1024*1024,
+          addRandomSuffix:false,
+          tokenPayload:JSON.stringify({
+            kind,
+            adminId:req.adminId,
+            pathname,
+            multipart:Boolean(multipart)
+          })
+        };
+      },
+      onUploadCompleted:async({blob,tokenPayload})=>{
+        console.info('Blob client upload completed:',{
+          pathname:blob?.pathname||'',
+          contentType:blob?.contentType||'',
+          tokenPayload:tokenPayload||''
+        });
+      }
+    });
+
+    return res.status(200).json(out);
+  }catch(e){
+    console.error('Blob client upload:',e);
+    return res.status(400).json({error:e.message||'Gagal membuat token upload Blob.'});
+  }
+});
 
 function localMedia(req){
   if(!req.file?.buffer)return '';
