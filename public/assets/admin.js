@@ -19,6 +19,33 @@ function esc(value) {
   });
 }
 function setProgress(id,text){ var el=document.getElementById(id); if(el) el.textContent=text||''; }
+function adminMediaUrl(url){
+  var value=String(url||'');
+  if(!value)return '';
+  if(value.indexOf('/uploads/')===0)return value;
+  if(value.indexOf('/api/media?path=')===0)return value;
+
+  try{
+    var parsed=new URL(value,location.origin);
+    var validBlob=parsed.protocol==='https:' &&
+      (parsed.hostname==='blob.vercel-storage.com'||/\\.blob\\.vercel-storage\\.com$/i.test(parsed.hostname));
+    if(!validBlob)return '';
+
+    var pathname=decodeURIComponent(parsed.pathname.replace(/^\\//,''));
+    if(!/^(logo|portfolio|stock)\\//.test(pathname))return '';
+    return '/api/media?path='+encodeURIComponent(pathname);
+  }catch(e){
+    return '';
+  }
+}
+
+function mediaFallback(el){
+  if(!el)return;
+  el.style.display='none';
+  var fallback=el.parentElement&&el.parentElement.querySelector('.admin-media-fallback');
+  if(fallback)fallback.style.display='grid';
+}
+
 
 async function uploadBlob(file,kind,progressId){
   setProgress(progressId,'Menyiapkan upload...');
@@ -97,9 +124,13 @@ function renderList(id,items,type){
     var meta=type==='portfolio'
       ? (item.location||'')+(item.service?' • '+item.service:'')
       : (item.brand||'AC')+(item.capacity?' • '+item.capacity:'');
-    var media=item.mediaType==='video'
-      ? '<video src="'+esc(item.media)+'" controls preload="metadata"></video>'
-      : '<img src="'+esc(item.media)+'" alt="">';
+    var mediaUrl=adminMediaUrl(item.media);
+    var media=mediaUrl
+      ? (item.mediaType==='video'
+          ? '<video src="'+esc(mediaUrl)+'" controls preload="metadata" onerror="mediaFallback(this)"></video>'
+          : '<img src="'+esc(mediaUrl)+'" alt="" onerror="mediaFallback(this)">')
+      : '';
+    media='<div class="admin-media-wrap">'+media+'<div class="admin-media-fallback" style="display:'+(mediaUrl?'none':'grid')+'">Media tidak tersedia</div></div>';
     return '<div class="admin-item"><div class="media-thumb">'+media+'</div><div><h3>'+esc(title)+'</h3><p>'+esc(meta)+'</p><p>'+esc(item.description||'')+'</p></div><button class="btn danger delete-btn" data-id="'+esc(item.id)+'" data-type="'+type+'">Hapus</button></div>';
   }).join('');
   el.querySelectorAll('.delete-btn').forEach(function(button){
