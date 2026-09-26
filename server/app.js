@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { neon } = require('@neondatabase/serverless');
-const { put, get, del, issueSignedToken, presignUrl } = require('@vercel/blob');
+const { put, del, issueSignedToken, presignUrl } = require('@vercel/blob');
 const { handleUpload } = require('@vercel/blob/client');
 
 const app = express();
@@ -183,30 +183,26 @@ app.get('/api/media',async(req,res)=>{
   try{
     const pathname=clean(req.query?.path,1000).replace(/^\//,'');
     if(!/^(logo|portfolio|stock)\//.test(pathname))return res.status(400).send('Media tidak valid.');
-    const result=await get(pathname,{access:'private',useCache:false});
-    if(!result)return res.status(404).send('Media tidak ditemukan.');
-    res.statusCode=200;
-    res.setHeader('Content-Type',result.blob.contentType||'application/octet-stream');
-    res.setHeader('Cache-Control','public, max-age=300, s-maxage=300, stale-while-revalidate=3600');
-    if(result.blob.size!=null)res.setHeader('Content-Length',String(result.blob.size));
-    if(result.stream&&typeof result.stream.pipe==='function'){
-      result.stream.pipe(res);
-      return;
-    }
-    if(result.stream&&typeof result.stream.getReader==='function'){
-      const reader=result.stream.getReader();
-      while(true){
-        const chunk=await reader.read();
-        if(chunk.done)break;
-        res.write(Buffer.from(chunk.value));
-      }
-      res.end();
-      return;
-    }
-    res.status(500).send('Stream media tidak tersedia.');
+
+    const validUntil=Date.now()+24*60*60*1000;
+    const signedToken=await issueSignedToken({
+      pathname,
+      operations:['get'],
+      validUntil
+    });
+    const signed=await presignUrl(signedToken,{
+      pathname,
+      operation:'get',
+      access:'private',
+      validUntil,
+      useCache:false
+    });
+
+    if(!signed?.presignedUrl)return res.status(404).send('Media tidak ditemukan.');
+    return res.redirect(302,signed.presignedUrl);
   }catch(e){
-    console.error('Blob media proxy:',e.message);
-    res.status(e.statusCode===404?404:500).send('Media tidak dapat dimuat.');
+    console.error('Blob media redirect:',e.message);
+    return res.status(e.statusCode||500).send('Media tidak dapat dimuat.');
   }
 });
 
