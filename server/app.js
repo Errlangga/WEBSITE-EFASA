@@ -43,6 +43,15 @@ const mediaUpload = multer({
   limits: { fileSize: 4 * 1024 * 1024 },
   fileFilter: (_r,f,cb) => cb(null, MIME.has(f.mimetype))
 });
+function mediaUploadSingle(req,res,next){
+  mediaUpload.single('media')(req,res,(err)=>{
+    if(!err)return next();
+    if(err.code==='LIMIT_FILE_SIZE'){
+      return res.status(413).json({ok:false,message:'Ukuran file maksimal 4 MB. Kompres foto/video lalu upload kembali.'});
+    }
+    return res.status(400).json({ok:false,message:err.message||'File media tidak valid.'});
+  });
+}
 let schemaReady;
 
 if (!USE_POSTGRES) {
@@ -390,8 +399,8 @@ async function saveItem(type,req,res){
     });
   }
 }
-app.post('/api/admin/portfolio',auth,csrfGuard,mediaUpload.single('media'),(req,res)=>saveItem('portfolio',req,res));
-app.post('/api/admin/stock',auth,csrfGuard,mediaUpload.single('media'),(req,res)=>saveItem('stock',req,res));
+app.post('/api/admin/portfolio',auth,csrfGuard,mediaUploadSingle,(req,res)=>saveItem('portfolio',req,res));
+app.post('/api/admin/stock',auth,csrfGuard,mediaUploadSingle,(req,res)=>saveItem('stock',req,res));
 app.post('/api/admin/logo',auth,csrfGuard,logoUpload.single('media'),async(req,res)=>{
   try{
     if(!req.file)return res.status(400).json({ok:false,message:'File logo wajib dipilih.'});
