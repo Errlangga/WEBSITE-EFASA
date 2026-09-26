@@ -99,6 +99,13 @@ async function browserMediaUrl(url){
   const value=String(url||'');
   if(!value)return '';
   if(value.startsWith('/uploads/'))return value;
+  if(value.startsWith('/api/media?path=')){
+    const pathname=clean(value.split('?path=')[1]||'',1000);
+    if(/^(logo|portfolio|stock)%2F/.test(pathname)||/^(logo|portfolio|stock)\//.test(pathname)){
+      return value;
+    }
+    return '';
+  }
   try{
     const u=new URL(value);
     const validHost=u.protocol==='https:'&&(u.hostname==='blob.vercel-storage.com'||/\.blob\.vercel-storage\.com$/i.test(u.hostname));
