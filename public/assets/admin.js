@@ -28,11 +28,11 @@ function adminMediaUrl(url){
   try{
     var parsed=new URL(value,location.origin);
     var validBlob=parsed.protocol==='https:' &&
-      (parsed.hostname==='blob.vercel-storage.com'||/\\.blob\\.vercel-storage\\.com$/i.test(parsed.hostname));
+      (parsed.hostname==='blob.vercel-storage.com'||/\.blob\.vercel-storage\.com$/i.test(parsed.hostname));
     if(!validBlob)return '';
 
-    var pathname=decodeURIComponent(parsed.pathname.replace(/^\\//,''));
-    if(!/^(logo|portfolio|stock)\\//.test(pathname))return '';
+    var pathname=decodeURIComponent(parsed.pathname.replace(/^\//,''));
+    if(!/^(logo|portfolio|stock)\//.test(pathname))return '';
     return '/api/media?path='+encodeURIComponent(pathname);
   }catch(e){
     return '';
