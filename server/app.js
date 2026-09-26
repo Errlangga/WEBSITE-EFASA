@@ -6,7 +6,6 @@ const path = require('path');
 const crypto = require('crypto');
 const { neon } = require('@neondatabase/serverless');
 const { put, get, del, issueSignedToken, presignUrl } = require('@vercel/blob');
-const { handleUpload } = require('@vercel/blob/client');
 
 const app = express();
 const ROOT = path.join(__dirname, '..');
@@ -41,7 +40,7 @@ const logoUpload = multer({
 });
 const mediaUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 100 * 1024 * 1024 },
+  limits: { fileSize: 4 * 1024 * 1024 },
   fileFilter: (_r,f,cb) => cb(null, MIME.has(f.mimetype))
 });
 let schemaReady;
@@ -98,25 +97,6 @@ function resolveBlobMedia(body,kind){
 
   if(!pathname||!pathname.startsWith(kind+'/'))return '';
   return '/api/media?path='+encodeURIComponent(pathname);
-}
-
-async function verifyBlobMedia(body,kind){
-  const media=resolveBlobMedia(body,kind);
-  if(!media)return '';
-
-  try{
-    const parsed=new URL(media,'https://efasa.local');
-    const pathname=decodeURIComponent(parsed.searchParams.get('path')||'').replace(/^\//,'');
-    if(!pathname.startsWith(kind+'/'))return '';
-
-    const result=await get(pathname,{access:'private',useCache:false});
-    if(!result?.blob)return '';
-
-    return '/api/media?path='+encodeURIComponent(pathname);
-  }catch(e){
-    console.warn('Blob media verification failed:',e.message);
-    return '';
-  }
 }
 
 async function browserMediaUrl(url){
@@ -320,60 +300,7 @@ app.post('/api/blob/upload-url',auth,csrfGuard,async(req,res)=>{try{
     mediaType:contentType.startsWith('video/')?'video':'image'
   });
 }catch(e){console.error('Blob presign upload:',e);res.status(400).json({ok:false,message:e.message||'Gagal membuat URL upload Blob.'});}});
-app.post('/api/blob/upload',auth,async(req,res)=>{
-  try{
-    const body=req.body&&typeof req.body==='object'?req.body:null;
-    if(!body||typeof body.type!=='string'){
-      throw new Error('Payload upload Blob tidak valid.');
-    }
 
-    const out=await handleUpload({
-      body,
-      request:req,
-      onBeforeGenerateToken:async(pathname,clientPayload,multipart)=>{
-        let payload={};
-        try{
-          payload=clientPayload?JSON.parse(clientPayload):{};
-        }catch{
-          throw new Error('Payload client Blob tidak valid.');
-        }
-
-        const kind=clean(payload.kind,20);
-        if(!['portfolio','stock'].includes(kind)){
-          throw new Error('Jenis media Blob tidak valid.');
-        }
-
-        if(!pathname.startsWith(kind+'/')){
-          throw new Error('Path media Blob tidak valid.');
-        }
-
-        return {
-          allowedContentTypes:Array.from(MIME),
-          maximumSizeInBytes:100*1024*1024,
-          addRandomSuffix:false,
-          tokenPayload:JSON.stringify({
-            kind,
-            adminId:req.adminId,
-            pathname,
-            multipart:Boolean(multipart)
-          })
-        };
-      },
-      onUploadCompleted:async({blob,tokenPayload})=>{
-        console.info('Blob client upload completed:',{
-          pathname:blob?.pathname||'',
-          contentType:blob?.contentType||'',
-          tokenPayload:tokenPayload||''
-        });
-      }
-    });
-
-    return res.status(200).json(out);
-  }catch(e){
-    console.error('Blob client upload:',e);
-    return res.status(400).json({error:e.message||'Gagal membuat token upload Blob.'});
-  }
-});
 
 function localMedia(req){
   if(!req.file?.buffer)return '';
@@ -383,20 +310,19 @@ function localMedia(req){
   return '/uploads/'+filename;
 }
 async function saveItem(type,req,res){
-  if(STORAGE_MODE==='local'&&!req.file){
-    return res.status(400).json({ok:false,message:'File foto/video wajib dipilih.'});
-  }
-
-  let media='';
-  let blobPath='';
+  if(!req.file)return res.status(400).json({ok:false,message:'File foto/video wajib dipilih.'});
 
   try{
+    let media='';
+    let blobPath='';
+
     if(STORAGE_MODE==='local'){
       media=localMedia(req);
-    }else if(req.file){
+    }else{
       const safeName=path.basename(req.file.originalname)
         .replace(/[^a-zA-Z0-9._-]+/g,'-')
         .replace(/^-+|-+$/g,'')||'file';
+
       blobPath=type+'/'+Date.now()+'-'+crypto.randomBytes(8).toString('hex')+'-'+safeName;
 
       const blob=await put(blobPath,req.file.buffer,{
@@ -411,29 +337,16 @@ async function saveItem(type,req,res){
       }
 
       media='/api/media?path='+encodeURIComponent(blobPath);
-      console.info('Blob server upload success:',{
+      console.info('Blob media upload success:',{
         type,
         pathname:blobPath,
         size:req.file.size,
         contentType:req.file.mimetype
       });
-    }else{
-      blobPath=clean(req.body?.mediaPath,1000).replace(/^\//,'');
-      media=await verifyBlobMedia(req.body,type);
-      if(!media){
-        if(blobPath.startsWith(type+'/')){
-          try{await del(blobPath,{access:'private'});}catch(cleanupError){
-            console.warn('Invalid client Blob cleanup:',cleanupError.message);
-          }
-        }
-        return res.status(400).json({
-          ok:false,
-          message:'Upload Blob selesai tetapi file tidak bisa diverifikasi. Upload ulang file.'
-        });
-      }
     }
 
     if(!media)throw new Error('Media gagal disimpan.');
+
     const x={
       id:id(),
       itemType:type,
@@ -446,9 +359,7 @@ async function saveItem(type,req,res){
       price:clean(req.body.price,80),
       description:clean(req.body.description,1200),
       media,
-      mediaType:req.body.mediaType==='video'
-        ? 'video'
-        : (req.file&&req.file.mimetype.startsWith('video/')?'video':'image'),
+      mediaType:req.file.mimetype.startsWith('video/')?'video':'image',
       createdAt:now()
     };
 
@@ -470,10 +381,13 @@ async function saveItem(type,req,res){
       throw e;
     }
 
-    res.json({ok:true,item:x});
+    return res.json({ok:true,item:x});
   }catch(e){
     console.error('Save media item:',e);
-    res.status(e.statusCode||500).json({ok:false,message:e.message||'Gagal menyimpan media.'});
+    return res.status(e.statusCode||500).json({
+      ok:false,
+      message:e.message||'Gagal menyimpan media.'
+    });
   }
 }
 app.post('/api/admin/portfolio',auth,csrfGuard,mediaUpload.single('media'),(req,res)=>saveItem('portfolio',req,res));
