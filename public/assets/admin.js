@@ -68,61 +68,47 @@ function mediaFallback(el){
 
 async function uploadBlob(file,kind,progressId){
   setProgress(progressId,'Menyiapkan upload...');
-  const info=await api('/api/blob/upload-url',{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({
-      kind:kind,
-      fileName:file.name,
-      contentType:file.type||((/\\.jpe?g$/i.test(file.name))?'image/jpeg':(/\\.png$/i.test(file.name)?'image/png':(/\\.webp$/i.test(file.name)?'image/webp':''))),
-      size:file.size
-    })
-  });
 
-  if(!info.presignedUrl||!info.mediaPath){
-    throw new Error('Server tidak mengembalikan informasi upload Blob.');
+  var clientModule;
+  try{
+    clientModule=await window.__efasaBlobClientPromise;
+  }catch(e){
+    throw new Error('Modul upload Vercel Blob gagal dimuat.');
   }
 
-  const uploaded=await new Promise(function(resolve,reject){
-    var xhr=new XMLHttpRequest();
-    xhr.open('PUT',info.presignedUrl,true);
-    if(file.type)xhr.setRequestHeader('Content-Type',file.type);
+  if(!clientModule||typeof clientModule.upload!=='function'){
+    throw new Error('Modul upload Vercel Blob tidak tersedia.');
+  }
 
-    xhr.upload.onprogress=function(event){
-      if(event.lengthComputable){
-        setProgress(progressId,'Upload '+Math.round(event.loaded/event.total*100)+'%');
+  var safeName=String(file.name||'file')
+    .replace(/[^a-zA-Z0-9._-]+/g,'-')
+    .replace(/^-+|-+$/g,'')||'file';
+  var pathname=kind+'/'+Date.now()+'-'+Math.random().toString(16).slice(2)+'-'+safeName;
+
+  var uploaded=await clientModule.upload(pathname,file,{
+    access:'private',
+    contentType:file.type||'application/octet-stream',
+    handleUploadUrl:'/api/blob/upload',
+    clientPayload:JSON.stringify({kind:kind}),
+    multipart:file.size>4*1024*1024,
+    onUploadProgress:function(event){
+      if(event&&typeof event.percentage==='number'){
+        setProgress(progressId,'Upload '+Math.round(event.percentage)+'%');
       }
-    };
-
-    xhr.onload=function(){
-      if(xhr.status<200||xhr.status>=300){
-        var detail=String(xhr.responseText||'').trim();
-        reject(new Error('Upload ke Vercel Blob gagal (HTTP '+xhr.status+').'+(detail?' '+detail.slice(0,240):'')));
-        return;
-      }
-
-      var result=null;
-      try{
-        result=xhr.responseText?JSON.parse(xhr.responseText):null;
-      }catch{}
-
-      resolve(result||{});
-    };
-
-    xhr.onerror=function(){reject(new Error('Koneksi upload ke Vercel Blob gagal.'));};
-    xhr.onabort=function(){reject(new Error('Upload dibatalkan.'));};
-    xhr.send(file);
+    }
   });
+
+  if(!uploaded||!uploaded.pathname){
+    throw new Error('Vercel Blob tidak mengembalikan hasil upload yang valid.');
+  }
 
   setProgress(progressId,'Upload tersimpan.');
 
   return {
-    mediaUrl:uploaded.url||info.mediaUrl||'',
+    mediaUrl:uploaded.url||'',
     mediaOrigin:'',
-    mediaPath:uploaded.pathname||info.mediaPath,
-    mediaType:uploaded.contentType
-      ? (String(uploaded.contentType).indexOf('video/')===0?'video':'image')
-      : info.mediaType
+    mediaPath:uploaded.pathname,
+    mediaType:String(uploaded.contentType||'').indexOf('video/')===0?'video':'image'
   };
 }
 
