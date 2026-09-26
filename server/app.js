@@ -164,41 +164,37 @@ app.get('/api/media',async(req,res)=>{
   if(!/^(logo|portfolio|stock)\//.test(pathname))return res.status(400).send('Media tidak valid.');
 
   try{
-    let result=null;
     try{
-      result=await get(pathname,{access:'private',useCache:false});
-    }catch(e){
-      console.warn('Blob get failed, fallback to signed URL:',e.message);
-    }
+      const result=await get(pathname,{access:'private',useCache:false});
+      if(result?.blob && result?.stream){
+        res.statusCode=200;
+        res.setHeader('Content-Type',result.blob.contentType||'application/octet-stream');
+        res.setHeader('Cache-Control','public, max-age=300, s-maxage=300, stale-while-revalidate=3600');
+        if(result.blob.size!=null)res.setHeader('Content-Length',String(result.blob.size));
 
-    if(result?.blob && result?.stream){
-      res.statusCode=200;
-      res.setHeader('Content-Type',result.blob.contentType||'application/octet-stream');
-      res.setHeader('Cache-Control','public, max-age=300, s-maxage=300, stale-while-revalidate=3600');
-      if(result.blob.size!=null)res.setHeader('Content-Length',String(result.blob.size));
-      if(typeof result.stream.pipe==='function'){
-        result.stream.pipe(res);
-        return;
-      }
-      if(typeof result.stream.getReader==='function'){
-        const reader=result.stream.getReader();
-        while(true){
-          const chunk=await reader.read();
-          if(chunk.done)break;
-          res.write(Buffer.from(chunk.value));
+        if(typeof result.stream.pipe==='function'){
+          result.stream.pipe(res);
+          return;
         }
-        res.end();
-        return;
+
+        if(typeof result.stream.getReader==='function'){
+          const reader=result.stream.getReader();
+          while(true){
+            const chunk=await reader.read();
+            if(chunk.done)break;
+            res.write(Buffer.from(chunk.value));
+          }
+          res.end();
+          return;
+        }
       }
+    }catch(e){
+      console.warn('Blob direct read failed:',e.message);
     }
 
     const validUntil=Date.now()+10*60*1000;
-    const signedToken=await issueSignedToken({
-      pathname,
-      operations:['get'],
-      validUntil
-    });
-    const signed=await presignUrl(signedToken,{
+    const signedToken=await issueSignedToken({pathname,operations:['get'],validUntil});
+    const signed=await presignUrl(token,{
       pathname,
       operation:'get',
       access:'private',
@@ -206,12 +202,35 @@ app.get('/api/media',async(req,res)=>{
       useCache:false
     });
     if(!signed?.presignedUrl)return res.status(404).send('Media tidak ditemukan.');
-    return res.redirect(302,signed.presignedUrl);
+
+    const upstream=await fetch(signed.presignedUrl,{cache:'no-store'});
+    if(!upstream.ok){
+      console.error('Blob signed fetch failed:',upstream.status,upstream.statusText);
+      return res.status(upstream.status===404?404:502).send('Media tidak dapat dimuat.');
+    }
+
+    res.status(200);
+    const contentType=upstream.headers.get('content-type');
+    const contentLength=upstream.headers.get('content-length');
+    if(contentType)res.setHeader('Content-Type',contentType);
+    if(contentLength)res.setHeader('Content-Length',contentLength);
+    res.setHeader('Cache-Control','public, max-age=300, s-maxage=300, stale-while-revalidate=3600');
+
+    if(upstream.body){
+      const reader=upstream.body.getReader();
+      while(true){
+        const chunk=await reader.read();
+        if(chunk.done)break;
+        res.write(Buffer.from(chunk.value));
+      }
+    }
+    res.end();
   }catch(e){
     console.error('Blob media proxy:',e.message);
-    return res.status(e.statusCode||500).send('Media tidak dapat dimuat.');
+    if(!res.headersSent)return res.status(e.statusCode||500).send('Media tidak dapat dimuat.');
+    res.end();
   }
-});;
+});
 
 app.get('/api/health',async(_req,res)=>{const hasDatabaseUrl=Boolean(process.env.DATABASE_URL);try{await settings();res.json({ok:true,database:'postgres',storage:STORAGE_MODE,node:process.version,hasDatabaseUrl});}catch(e){res.status(e.statusCode||500).json({ok:false,database:PERSISTENCE_MODE,storage:STORAGE_MODE,node:process.version,hasDatabaseUrl,message:e.message});}});
 app.get('/api/public',async(_req,res)=>{try{
