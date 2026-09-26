@@ -39,6 +39,11 @@ const logoUpload = multer({
   limits: { fileSize: 4 * 1024 * 1024 },
   fileFilter: (_r,f,cb) => cb(null, ['image/jpeg','image/png','image/webp'].includes(f.mimetype))
 });
+const mediaUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 100 * 1024 * 1024 },
+  fileFilter: (_r,f,cb) => cb(null, MIME.has(f.mimetype))
+});
 let schemaReady;
 
 if (!USE_POSTGRES) {
