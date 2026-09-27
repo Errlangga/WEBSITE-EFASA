@@ -317,14 +317,13 @@ async function appendBackupLogo(archive,logoUrl,missing){
   await appendBackupMedia(archive,{media:logoUrl},archiveName,missing);
 }
 
-async function createFullBackupArchive(){
+async function populateFullBackupArchive(archive){
   const backup=await buildDatabaseBackup();
   const missing=[];
   const files=[];
   const stamp=new Date().toISOString().replace(/[:.]/g,'-');
   const filename=`efasa-full-backup-${stamp}.zip`;
 
-  const archive=archiver('zip',{zlib:{level:6}});
   archive.on('warning',err=>console.warn('Full backup archive warning:',err.message));
 
   appendArchiveBuffer(archive,'database.json',Buffer.from(JSON.stringify(backup,null,2),'utf8'));
@@ -339,7 +338,7 @@ async function createFullBackupArchive(){
     '- File media yang gagal diambil dicatat di manifest.json.',
     '',
     'Catatan: Backup ini adalah salinan data + media, bukan proses restore otomatis.'
-  ].join('\n'),'utf8'));
+  ].join('\\n'),'utf8'));
   files.push('README.txt');
 
   if(backup.settings?.logo){
@@ -375,33 +374,36 @@ async function createFullBackupArchive(){
   };
   appendArchiveBuffer(archive,'manifest.json',Buffer.from(JSON.stringify(manifest,null,2),'utf8'));
 
-  return {archive,backup,filename,manifest};
+  return {backup,filename,manifest};
 }
 
 app.get('/api/admin/backup/full',auth,async(_req,res)=>{
   let output=null;
   try{
-    const full=await createFullBackupArchive();
+    const archive=archiver('zip',{zlib:{level:6}});
     if(STORAGE_MODE==='local'){
+      output=new PassThrough();
+      archive.pipe(output).pipe(res);
+      const full=await populateFullBackupArchive(archive);
       res.setHeader('Content-Type','application/zip');
       res.setHeader('Content-Disposition',`attachment; filename="${full.filename}"`);
       res.setHeader('Cache-Control','private, no-store, max-age=0');
-      output=new PassThrough();
-      full.archive.pipe(output).pipe(res);
-      await full.archive.finalize();
+      await archive.finalize();
       return;
     }
 
     output=new PassThrough();
-    full.archive.pipe(output);
-    const blobPath=`backups/${full.filename}-${crypto.randomBytes(6).toString('hex')}`;
+    archive.pipe(output);
+    const stamp=new Date().toISOString().replace(/[:.]/g,'-');
+    const blobPath=`backups/efasa-full-backup-${stamp}-${crypto.randomBytes(6).toString('hex')}.zip`;
     const uploadPromise=put(blobPath,Readable.toWeb(output),{
       access:'private',
       contentType:'application/zip',
       addRandomSuffix:false,
       multipart:true
     });
-    await full.archive.finalize();
+    const full=await populateFullBackupArchive(archive);
+    await archive.finalize();
     const uploaded=await uploadPromise;
     const validUntil=Date.now()+(15*60*1000);
     const token=await issueSignedToken({pathname:uploaded.pathname,operations:['get'],validUntil});
@@ -413,7 +415,6 @@ app.get('/api/admin/backup/full',auth,async(_req,res)=>{
     if(!res.headersSent)return res.status(e.statusCode||500).json({ok:false,message:e.message||'Full backup gagal.'});
   }
 });
-
 app.post('/api/admin/setup',async(req,res)=>{try{requirePersistence();let existing;if(USE_POSTGRES){await ready();const r=await sql`SELECT id FROM admins LIMIT 1`;existing=r[0]||null;}else{existing=dbRead().admin;}if(existing)return res.status(409).json({ok:false,message:'Admin sudah dibuat. Silakan login.'});const username=clean(req.body.username,32),password=String(req.body.password||'');if(!/^[a-zA-Z0-9._-]{3,32}$/.test(username))return res.status(400).json({ok:false,message:'Username 3-32 karakter.'});if(password.length<10)return res.status(400).json({ok:false,message:'Password minimal 10 karakter.'});const x={id:id(),username,password_hash:hash(password),created_at:now()};if(USE_POSTGRES){await ready();await sql`INSERT INTO admins(id,username,password_hash,created_at) VALUES(${x.id},${x.username},${x.password_hash},${x.created_at})`;}else{const d=dbRead();if(d.admin)return res.status(409).json({ok:false,message:'Admin sudah dibuat.'});d.admin=x;dbWrite(d);}res.json({ok:true,message:'Admin berhasil dibuat.'});}catch(e){res.status(500).json({ok:false,message:e.message});}});
 app.post('/api/admin/login',async(req,res)=>{try{const a=await adminByName(clean(req.body.username,32));if(!a||!verifyPassword(String(req.body.password||''),a.password_hash||a.password))return res.status(401).json({ok:false,message:'Username atau password salah.'});cookie(res,'efasa_admin',token(a.id),{httpOnly:true,sameSite:'Lax',maxAge:86400});csrf(req,res);res.json({ok:true});}catch(e){res.status(500).json({ok:false,message:e.message});}});
 app.post('/api/admin/password',auth,csrfGuard,async(req,res)=>{try{const password=String(req.body.password||''),confirm=String(req.body.confirmPassword||'');if(password.length<10)return res.status(400).json({ok:false,message:'Password baru minimal 10 karakter.'});if(password!==confirm)return res.status(400).json({ok:false,message:'Konfirmasi password tidak sama.'});const newHash=hash(password);if(!USE_POSTGRES){const d=dbRead();if(!d.admin||d.admin.id!==req.adminId)return res.status(404).json({ok:false,message:'Admin tidak ditemukan.'});d.admin.password_hash=newHash;dbWrite(d);}else{await ready();const r=await sql`UPDATE admins SET password_hash=${newHash} WHERE id=${req.adminId} RETURNING id`;if(!r[0])return res.status(404).json({ok:false,message:'Admin tidak ditemukan.'});}cookie(res,'efasa_admin',token(req.adminId),{httpOnly:true,sameSite:'Lax',maxAge:86400});res.json({ok:true,message:'Password berhasil diubah.'});}catch(e){res.status(500).json({ok:false,message:e.message});}});
