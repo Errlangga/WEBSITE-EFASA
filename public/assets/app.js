@@ -336,6 +336,15 @@ async function loadSite() {
   fallback.style.display = logoUrl ? 'none' : 'grid';
   if (logoUrl) logo.src = logoUrl;
 
+  var navLogo = document.getElementById('navLogo');
+  var navLogoFallback = document.getElementById('navLogoFallback');
+  if (navLogo && navLogoFallback) {
+    navLogo.style.display = logoUrl ? 'block' : 'none';
+    navLogoFallback.style.display = logoUrl ? 'none' : 'grid';
+    if (logoUrl) navLogo.src = logoUrl;
+  }
+
+
   renderPortfolio(data.portfolio || []);
   renderStock(data.stock || []);
   bindReveal();
