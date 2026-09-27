@@ -119,8 +119,26 @@
     </section>
   </main>
 
+  <div class="contact-orbit" id="contactOrbit">
+    <div class="contact-orbit__backdrop" aria-hidden="true"></div>
+    <div class="contact-orbit__items">
+      <a id="floatingPhone" class="contact-orbit__item contact-orbit__item--phone" href="#" aria-label="Telepon EFASA TEKNIK">
+        <span class="contact-orbit__icon" aria-hidden="true">☎</span>
+        <span class="contact-orbit__label">Telepon</span>
+      </a>
+      <a id="floatingWhatsapp" class="contact-orbit__item contact-orbit__item--whatsapp" href="#" target="_blank" rel="noreferrer" aria-label="WhatsApp EFASA TEKNIK">
+        <span class="contact-orbit__icon" aria-hidden="true">◔</span>
+        <span class="contact-orbit__label">WhatsApp</span>
+      </a>
+    </div>
+    <button class="contact-orbit__toggle" id="contactOrbitToggle" type="button" aria-expanded="false" aria-controls="contactOrbit" aria-label="Buka kontak cepat">
+      <span class="contact-orbit__toggle-icon contact-orbit__toggle-icon--open" aria-hidden="true">⌁</span>
+      <span class="contact-orbit__toggle-icon contact-orbit__toggle-icon--close" aria-hidden="true">×</span>
+      <span class="contact-orbit__pulse" aria-hidden="true"></span>
+    </button>
+  </div>
   <footer class="footer"><div class="container footer-row"><span>© <span id="year"></span> EFASA TEKNIK</span><span id="address">Malang, Jawa Timur</span></div></footer>
-  <a id="floatingWhatsapp" class="floating-wa" href="#" target="_blank" rel="noreferrer" aria-label="WhatsApp">WA</a>
-    <script src="/assets/app.js?v=20260927-pagesplit1"></script>
+    <script src="/assets/app.js?v=20260927-contactwidget2"></script>
+  <script src="/assets/contact-widget.js?v=20260927-contactwidget2"></script>
 </body>
 </html>
