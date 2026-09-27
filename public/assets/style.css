@@ -558,3 +558,186 @@ body:after{
   .inner-hero h1{font-size:clamp(42px,12vw,68px)}
   .inner-content{padding-top:12px}
 }
+
+
+/* ===== EFASA CONTACT ORBIT ===== */
+.contact-orbit{
+  position:fixed;
+  right:20px;
+  bottom:20px;
+  z-index:90;
+  width:74px;
+  height:74px;
+  isolation:isolate;
+}
+.contact-orbit__backdrop{
+  position:absolute;
+  inset:-28px;
+  border-radius:50%;
+  background:radial-gradient(circle,rgba(8,124,245,.16),transparent 68%);
+  opacity:.7;
+  filter:blur(12px);
+  pointer-events:none;
+  transition:transform .65s cubic-bezier(.16,1,.3,1),opacity .35s ease;
+}
+.contact-orbit__toggle{
+  position:absolute;
+  inset:0;
+  width:74px;
+  height:74px;
+  border:1px solid rgba(255,255,255,.18);
+  border-radius:50%;
+  cursor:pointer;
+  color:#fff;
+  background:
+    radial-gradient(circle at 30% 24%,rgba(255,255,255,.28),transparent 28%),
+    linear-gradient(145deg,#16a9ff,#087cf5 62%,#315bff);
+  box-shadow:0 18px 44px rgba(8,124,245,.32),0 0 0 1px rgba(101,215,255,.08);
+  display:grid;
+  place-items:center;
+  overflow:hidden;
+  transform:rotate(0deg);
+  transition:transform .7s cubic-bezier(.16,1,.3,1),box-shadow .4s ease,filter .35s ease;
+  -webkit-tap-highlight-color:transparent;
+}
+.contact-orbit__toggle:hover{
+  box-shadow:0 22px 55px rgba(8,124,245,.42),0 0 0 8px rgba(80,192,255,.06);
+  filter:saturate(1.08);
+}
+.contact-orbit__toggle-icon{
+  position:absolute;
+  font-size:31px;
+  line-height:1;
+  transition:transform .65s cubic-bezier(.16,1,.3,1),opacity .3s ease;
+}
+.contact-orbit__toggle-icon--open{transform:rotate(0deg) scale(1)}
+.contact-orbit__toggle-icon--close{transform:rotate(-90deg) scale(.45);opacity:0}
+.contact-orbit__pulse{
+  position:absolute;
+  inset:8px;
+  border:1px solid rgba(255,255,255,.18);
+  border-radius:50%;
+  animation:contactOrbitPulse 2.8s ease-out infinite;
+}
+@keyframes contactOrbitPulse{
+  0%{transform:scale(.88);opacity:.65}
+  70%,100%{transform:scale(1.18);opacity:0}
+}
+.contact-orbit__items{
+  position:absolute;
+  right:0;
+  bottom:0;
+  width:100%;
+  height:100%;
+  pointer-events:none;
+}
+.contact-orbit__item{
+  --item-bg:#087cf5;
+  position:absolute;
+  right:4px;
+  bottom:4px;
+  width:58px;
+  height:58px;
+  border-radius:20px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:#fff;
+  text-decoration:none;
+  border:1px solid rgba(255,255,255,.16);
+  box-shadow:0 16px 38px rgba(0,0,0,.28);
+  opacity:0;
+  transform:translate3d(0,0,0) scale(.35) rotate(-18deg);
+  transition:
+    transform .7s cubic-bezier(.16,1,.3,1),
+    opacity .36s ease,
+    box-shadow .35s ease;
+  pointer-events:none;
+  will-change:transform,opacity;
+}
+.contact-orbit__item--phone{
+  background:linear-gradient(145deg,#ff8a3d,#ff4f21);
+}
+.contact-orbit__item--whatsapp{
+  background:linear-gradient(145deg,#2edb5c,#16a84a);
+}
+.contact-orbit__icon{
+  width:34px;
+  height:34px;
+  border:1px solid rgba(255,255,255,.22);
+  border-radius:13px;
+  display:grid;
+  place-items:center;
+  font-weight:900;
+  font-size:19px;
+  background:rgba(255,255,255,.12);
+  backdrop-filter:blur(8px);
+}
+.contact-orbit__label{
+  position:absolute;
+  right:70px;
+  top:50%;
+  transform:translateY(-50%) translateX(8px);
+  padding:8px 11px;
+  border-radius:10px;
+  background:rgba(4,13,25,.92);
+  border:1px solid rgba(255,255,255,.12);
+  color:#dff4ff;
+  font-size:11px;
+  font-weight:800;
+  white-space:nowrap;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .25s ease,transform .35s cubic-bezier(.16,1,.3,1);
+  box-shadow:0 12px 30px rgba(0,0,0,.25);
+}
+.contact-orbit__item:hover .contact-orbit__label{
+  opacity:1;
+  transform:translateY(-50%) translateX(0);
+}
+.contact-orbit.is-open .contact-orbit__backdrop{
+  transform:scale(1.8);
+  opacity:1;
+}
+.contact-orbit.is-open .contact-orbit__toggle{
+  transform:rotate(135deg);
+  box-shadow:0 22px 60px rgba(8,124,245,.36),0 0 0 10px rgba(80,192,255,.06);
+}
+.contact-orbit.is-open .contact-orbit__toggle-icon--open{
+  transform:rotate(90deg) scale(.45);
+  opacity:0;
+}
+.contact-orbit.is-open .contact-orbit__toggle-icon--close{
+  transform:rotate(0deg) scale(1);
+  opacity:1;
+}
+.contact-orbit.is-open .contact-orbit__item{
+  pointer-events:auto;
+}
+.contact-orbit.is-open .contact-orbit__item--phone{
+  opacity:1;
+  transform:translate3d(0,-82px,0) scale(1) rotate(0);
+  transition-delay:.03s;
+}
+.contact-orbit.is-open .contact-orbit__item--whatsapp{
+  opacity:1;
+  transform:translate3d(0,-152px,0) scale(1) rotate(0);
+  transition-delay:.11s;
+}
+.contact-orbit.is-open .contact-orbit__item:active{
+  transform:scale(.92);
+}
+@media(max-width:760px){
+  .contact-orbit{right:14px;bottom:14px}
+  .contact-orbit__label{display:none}
+  .contact-orbit__toggle{width:62px;height:62px}
+  .contact-orbit{width:62px;height:62px}
+  .contact-orbit__item{width:54px;height:54px;border-radius:18px;right:4px;bottom:4px}
+  .contact-orbit.is-open .contact-orbit__item--phone{transform:translate3d(0,-72px,0) scale(1) rotate(0)}
+  .contact-orbit.is-open .contact-orbit__item--whatsapp{transform:translate3d(0,-134px,0) scale(1) rotate(0)}
+  .contact-orbit__pulse{inset:7px}
+}
+@media(prefers-reduced-motion:reduce){
+  .contact-orbit__pulse{animation:none}
+  .contact-orbit__toggle,.contact-orbit__item,.contact-orbit__backdrop,.contact-orbit__toggle-icon,.contact-orbit__label{transition:none}
+}
