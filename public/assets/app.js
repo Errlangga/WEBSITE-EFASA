@@ -227,11 +227,12 @@ function mediaHtml(item) {
 }
 
 function catalogUrl(id) {
-  return location.origin + '/?stock=' + encodeURIComponent(id) + '#stok';
+  return location.origin + '/stok/?stock=' + encodeURIComponent(id) + '#stok';
 }
 
 function renderPortfolio(items) {
   var el = document.getElementById('portfolioGrid');
+  if (!el) return;
   if (!items.length) {
     el.innerHTML = '<div class="empty-state">Belum ada dokumentasi pekerjaan yang ditampilkan.</div>';
     return;
@@ -249,6 +250,7 @@ function renderPortfolio(items) {
 function renderStock(items) {
   var grid = document.getElementById('stockGrid');
   var empty = document.getElementById('emptyStock');
+  if (!grid || !empty) return;
   empty.classList.toggle('hidden', items.length > 0);
   grid.innerHTML = items.map(function(item) {
     var url = catalogUrl(item.id);
@@ -264,6 +266,8 @@ function renderStock(items) {
       esc(waUrl(window.__siteWhatsapp, message)) + '">Tanya ketersediaan</a></div></article>';
   }).join('');
 }
+
+function setText(id, value) { var el = document.getElementById(id); if (el) el.textContent = value; }
 
 var observer;
 function bindReveal() {
@@ -288,12 +292,12 @@ async function loadSite() {
   window.__siteWhatsapp = s.whatsapp || '';
   document.title = (s.brand || 'EFASA TEKNIK') + ' — ' + (s.tagline || 'Teknik Pendingin Ruangan');
 
-  document.getElementById('brandName').textContent = s.brand || 'EFASA TEKNIK';
-  document.getElementById('heroTitle').textContent = s.heroTitle || 'Layanan Teknik Pendingin Ruangan';
-  document.getElementById('heroText').textContent = s.heroText || 'Melayani AC rumahan, perkantoran, dan industrial.';
-  document.getElementById('serviceArea').textContent = s.serviceArea || 'Malang Raya dan sekitarnya';
-  document.getElementById('hours').textContent = s.hours || '08.00 - 17.00';
-  document.getElementById('address').textContent = s.address || '';
+  setText('brandName', s.brand || 'EFASA TEKNIK');
+  setText('heroTitle', s.heroTitle || 'Layanan Teknik Pendingin Ruangan');
+  setText('heroText', s.heroText || 'Melayani AC rumahan, perkantoran, dan industrial.');
+  setText('serviceArea', s.serviceArea || 'Malang Raya dan sekitarnya');
+  setText('hours', s.hours || '08.00 - 17.00');
+  setText('address', s.address || '');
 
   var wa = waUrl(s.whatsapp);
   ['navWhatsapp','heroWhatsapp','contactWhatsapp','floatingWhatsapp'].forEach(function(id) {
@@ -303,8 +307,10 @@ async function loadSite() {
   });
   var email = String(s.email || '').trim();
   var emailEl = document.getElementById('contactEmail');
-  emailEl.href = email ? 'mailto:' + email : '#';
-  emailEl.classList.toggle('disabled-link', !email);
+  if (emailEl) {
+    emailEl.href = email ? 'mailto:' + email : '#';
+    emailEl.classList.toggle('disabled-link', !email);
+  }
 
   var mapsLink = String(s.mapsLink || '').trim();
   var locationUrl = '';
@@ -329,12 +335,14 @@ async function loadSite() {
     locationEl.setAttribute('aria-disabled', locationUrl ? 'false' : 'true');
   }
 
+  var logoUrl = safeMediaUrl(s.logo);
   var logo = document.getElementById('siteLogo');
   var fallback = document.getElementById('logoFallback');
-  var logoUrl = safeMediaUrl(s.logo);
-  logo.style.display = logoUrl ? 'block' : 'none';
-  fallback.style.display = logoUrl ? 'none' : 'grid';
-  if (logoUrl) logo.src = logoUrl;
+  if (logo && fallback) {
+    logo.style.display = logoUrl ? 'block' : 'none';
+    fallback.style.display = logoUrl ? 'none' : 'grid';
+    if (logoUrl) logo.src = logoUrl;
+  }
 
   var navLogo = document.getElementById('navLogo');
   var navLogoFallback = document.getElementById('navLogoFallback');
@@ -365,7 +373,7 @@ async function loadSite() {
 }
 
 window.addEventListener('load', function() {
-  document.getElementById('year').textContent = new Date().getFullYear();
+  setText('year', new Date().getFullYear());
   setupScrollMotion();
   setupAirflowExperience();
   setupTypewriter();
