@@ -5,7 +5,9 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { neon } = require('@neondatabase/serverless');
-const { put, get, del } = require('@vercel/blob');
+const { put, get, del, issueSignedToken, presignUrl } = require('@vercel/blob');
+const archiver = require('archiver');
+const { PassThrough, Readable } = require('stream');
 
 const app = express();
 const ROOT = path.join(__dirname, '..');
@@ -248,6 +250,170 @@ app.get('/api/admin/backup',auth,async(_req,res)=>{
     res.status(e.statusCode||500).json({ok:false,message:e.message||'Backup database gagal.'});
   }
 });
+function blobPathFromStoredMediaUrl(url){
+  const value=String(url||'').trim();
+  if(!value)return '';
+  if(value.startsWith('/api/media?path=')){
+    try{
+      const parsed=new URL(value,'https://efasa.local');
+      const pathname=decodeURIComponent(parsed.searchParams.get('path')||'').replace(/^\//,'');
+      return /^(logo|portfolio|stock)\//.test(pathname) ? pathname : '';
+    }catch{return '';}
+  }
+  try{
+    const parsed=new URL(value);
+    const validHost=parsed.protocol==='https:' &&
+      (parsed.hostname==='blob.vercel-storage.com'||/\.blob\.vercel-storage\.com$/i.test(parsed.hostname)||/\.private\.blob\.vercel-storage\.com$/i.test(parsed.hostname));
+    if(!validHost)return '';
+    const pathname=decodeURIComponent(parsed.pathname.replace(/^\//,'')).replace(/^\//,'');
+    return /^(logo|portfolio|stock)\//.test(pathname) ? pathname : '';
+  }catch{return '';}
+}
+
+function localPathFromStoredMediaUrl(url){
+  const value=String(url||'').trim();
+  if(!value.startsWith('/uploads/'))return '';
+  const pathname=value.replace(/^\/+/,'');
+  const filePath=path.join(PUBLIC,pathname);
+  return filePath.startsWith(PUBLIC+path.sep) ? filePath : '';
+}
+
+function backupArchiveName(type,id,url){
+  const pathname=blobPathFromStoredMediaUrl(url)||path.basename(String(url||''));
+  const base=path.basename(pathname||'file').replace(/[^a-zA-Z0-9._-]+/g,'-')||'file';
+  return `media/${type}/${id}-${base}`;
+}
+
+function appendArchiveBuffer(archive,name,buffer){
+  archive.append(buffer,{name});
+}
+
+async function appendBackupMedia(archive,item,archiveName,missing){
+  const url=String(item.media||'').trim();
+  if(!url){missing.push({archiveName,reason:'URL media kosong'});return;}
+
+  if(STORAGE_MODE==='local'){
+    const filePath=localPathFromStoredMediaUrl(url);
+    if(!filePath||!fs.existsSync(filePath)){missing.push({archiveName,reason:'File lokal tidak ditemukan',source:url});return;}
+    archive.file(filePath,{name:archiveName});
+    return;
+  }
+
+  const pathname=blobPathFromStoredMediaUrl(url);
+  if(!pathname){missing.push({archiveName,reason:'Path Vercel Blob tidak valid',source:url});return;}
+  const result=await get(pathname,{access:'private',useCache:false});
+  if(!result?.stream){missing.push({archiveName,reason:'Media Vercel Blob tidak ditemukan',source:pathname});return;}
+  const stream=Readable.fromWeb(result.stream);
+  archive.append(stream,{name:archiveName});
+  await new Promise((resolve,reject)=>{
+    stream.once('end',resolve);
+    stream.once('error',reject);
+  });
+}
+
+async function appendBackupLogo(archive,logoUrl,missing){
+  if(!logoUrl)return;
+  const archiveName='media/logo/logo-'+path.basename(String(blobPathFromStoredMediaUrl(logoUrl)||logoUrl)).replace(/[^a-zA-Z0-9._-]+/g,'-');
+  await appendBackupMedia(archive,{media:logoUrl},archiveName,missing);
+}
+
+async function createFullBackupArchive(){
+  const backup=await buildDatabaseBackup();
+  const missing=[];
+  const files=[];
+  const stamp=new Date().toISOString().replace(/[:.]/g,'-');
+  const filename=`efasa-full-backup-${stamp}.zip`;
+
+  const archive=archiver('zip',{zlib:{level:6}});
+  archive.on('warning',err=>console.warn('Full backup archive warning:',err.message));
+
+  appendArchiveBuffer(archive,'database.json',Buffer.from(JSON.stringify(backup,null,2),'utf8'));
+  files.push('database.json');
+  appendArchiveBuffer(archive,'README.txt',Buffer.from([
+    'EFASA TEKNIK - FULL BACKUP',
+    '',
+    `Dibuat: ${backup.createdAt}`,
+    'Isi:',
+    '- database.json berisi data website tanpa password admin.',
+    '- media/ berisi logo, dokumentasi, dan stok yang masih tersedia.',
+    '- File media yang gagal diambil dicatat di manifest.json.',
+    '',
+    'Catatan: Backup ini adalah salinan data + media, bukan proses restore otomatis.'
+  ].join('\n'),'utf8'));
+  files.push('README.txt');
+
+  if(backup.settings?.logo){
+    const name='media/logo/'+path.basename(String(blobPathFromStoredMediaUrl(backup.settings.logo)||backup.settings.logo)).replace(/[^a-zA-Z0-9._-]+/g,'-');
+    await appendBackupMedia(archive,{media:backup.settings.logo},name,missing);
+    if(!missing.some(x=>x.archiveName===name))files.push(name);
+  }
+
+  for(const item of [...backup.portfolio,...backup.stock]){
+    const type=item.itemType==='stock'?'stock':'portfolio';
+    const name=backupArchiveName(type,item.id,item.media);
+    await appendBackupMedia(archive,item,name,missing);
+    if(!missing.some(x=>x.archiveName===name))files.push(name);
+  }
+
+  const manifest={
+    formatVersion:1,
+    app:'EFASA TEKNIK',
+    backupType:'full',
+    createdAt:backup.createdAt,
+    database:{
+      portfolioCount:Array.isArray(backup.portfolio)?backup.portfolio.length:0,
+      stockCount:Array.isArray(backup.stock)?backup.stock.length:0,
+      adminIncluded:false
+    },
+    media:{
+      expected:files.filter(x=>x.startsWith('media/')).length+missing.length,
+      included:files.filter(x=>x.startsWith('media/')).length,
+      missing:missing.length
+    },
+    missingMedia:missing,
+    files
+  };
+  appendArchiveBuffer(archive,'manifest.json',Buffer.from(JSON.stringify(manifest,null,2),'utf8'));
+
+  return {archive,backup,filename,manifest};
+}
+
+app.get('/api/admin/backup/full',auth,async(_req,res)=>{
+  let output=null;
+  try{
+    const full=await createFullBackupArchive();
+    if(STORAGE_MODE==='local'){
+      res.setHeader('Content-Type','application/zip');
+      res.setHeader('Content-Disposition',`attachment; filename="${full.filename}"`);
+      res.setHeader('Cache-Control','private, no-store, max-age=0');
+      output=new PassThrough();
+      full.archive.pipe(output).pipe(res);
+      await full.archive.finalize();
+      return;
+    }
+
+    output=new PassThrough();
+    full.archive.pipe(output);
+    const blobPath=`backups/${full.filename}-${crypto.randomBytes(6).toString('hex')}`;
+    const uploadPromise=put(blobPath,Readable.toWeb(output),{
+      access:'private',
+      contentType:'application/zip',
+      addRandomSuffix:false,
+      multipart:true
+    });
+    await full.archive.finalize();
+    const uploaded=await uploadPromise;
+    const validUntil=Date.now()+(15*60*1000);
+    const token=await issueSignedToken({pathname:uploaded.pathname,operations:['get'],validUntil});
+    const signed=await presignUrl(token,{pathname:uploaded.pathname,operation:'get',validUntil});
+    return res.redirect(302,signed.presignedUrl);
+  }catch(e){
+    try{output?.destroy(e);}catch{}
+    console.error('Full database/media backup:',e);
+    if(!res.headersSent)return res.status(e.statusCode||500).json({ok:false,message:e.message||'Full backup gagal.'});
+  }
+});
+
 app.post('/api/admin/setup',async(req,res)=>{try{requirePersistence();let existing;if(USE_POSTGRES){await ready();const r=await sql`SELECT id FROM admins LIMIT 1`;existing=r[0]||null;}else{existing=dbRead().admin;}if(existing)return res.status(409).json({ok:false,message:'Admin sudah dibuat. Silakan login.'});const username=clean(req.body.username,32),password=String(req.body.password||'');if(!/^[a-zA-Z0-9._-]{3,32}$/.test(username))return res.status(400).json({ok:false,message:'Username 3-32 karakter.'});if(password.length<10)return res.status(400).json({ok:false,message:'Password minimal 10 karakter.'});const x={id:id(),username,password_hash:hash(password),created_at:now()};if(USE_POSTGRES){await ready();await sql`INSERT INTO admins(id,username,password_hash,created_at) VALUES(${x.id},${x.username},${x.password_hash},${x.created_at})`;}else{const d=dbRead();if(d.admin)return res.status(409).json({ok:false,message:'Admin sudah dibuat.'});d.admin=x;dbWrite(d);}res.json({ok:true,message:'Admin berhasil dibuat.'});}catch(e){res.status(500).json({ok:false,message:e.message});}});
 app.post('/api/admin/login',async(req,res)=>{try{const a=await adminByName(clean(req.body.username,32));if(!a||!verifyPassword(String(req.body.password||''),a.password_hash||a.password))return res.status(401).json({ok:false,message:'Username atau password salah.'});cookie(res,'efasa_admin',token(a.id),{httpOnly:true,sameSite:'Lax',maxAge:86400});csrf(req,res);res.json({ok:true});}catch(e){res.status(500).json({ok:false,message:e.message});}});
 app.post('/api/admin/password',auth,csrfGuard,async(req,res)=>{try{const password=String(req.body.password||''),confirm=String(req.body.confirmPassword||'');if(password.length<10)return res.status(400).json({ok:false,message:'Password baru minimal 10 karakter.'});if(password!==confirm)return res.status(400).json({ok:false,message:'Konfirmasi password tidak sama.'});const newHash=hash(password);if(!USE_POSTGRES){const d=dbRead();if(!d.admin||d.admin.id!==req.adminId)return res.status(404).json({ok:false,message:'Admin tidak ditemukan.'});d.admin.password_hash=newHash;dbWrite(d);}else{await ready();const r=await sql`UPDATE admins SET password_hash=${newHash} WHERE id=${req.adminId} RETURNING id`;if(!r[0])return res.status(404).json({ok:false,message:'Admin tidak ditemukan.'});}cookie(res,'efasa_admin',token(req.adminId),{httpOnly:true,sameSite:'Lax',maxAge:86400});res.json({ok:true,message:'Password berhasil diubah.'});}catch(e){res.status(500).json({ok:false,message:e.message});}});
