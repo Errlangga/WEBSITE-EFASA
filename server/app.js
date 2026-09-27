@@ -259,7 +259,7 @@ app.get('/api/public',async(_req,res)=>{try{
   const media=[...portfolio,...stock];
   for(const item of media)item.media=await browserMediaUrl(item.media);
   res.status(200).json({ok:true,settings:siteSettings,portfolio,stock});
-}catch(e){res.status(e.statusCode||500).json({ok:false,message:e.message||'Data website gagal dimuat.',database:PERSISTENCE_MODE});}});
+}catch(e){console.error('Public data:',e.message);res.status(e.statusCode||500).json({ok:false,message:'Data website gagal dimuat.'});}});
 async function buildDatabaseBackup(){
   requirePersistence();
 
@@ -312,7 +312,7 @@ app.get('/api/admin/backup',auth,async(_req,res)=>{
     res.status(200).send(JSON.stringify(backup,null,2));
   }catch(e){
     console.error('Database backup:',e);
-    res.status(e.statusCode||500).json({ok:false,message:e.message||'Backup database gagal.'});
+    res.status(e.statusCode||500).json({ok:false,message:'Backup database gagal.'});
   }
 });
 function blobPathFromStoredMediaUrl(url){
@@ -477,14 +477,14 @@ app.get('/api/admin/backup/full',auth,async(_req,res)=>{
   }catch(e){
     try{output?.destroy(e);}catch{}
     console.error('Full database/media backup:',e);
-    if(!res.headersSent)return res.status(e.statusCode||500).json({ok:false,message:e.message||'Full backup gagal.'});
+    if(!res.headersSent)return res.status(e.statusCode||500).json({ok:false,message:'Full backup gagal.'});
   }
 });
-app.post('/api/admin/setup',setupRateLimit,sameOrigin,async(req,res)=>{try{requirePersistence();let existing;if(USE_POSTGRES){await ready();const r=await sql`SELECT id FROM admins LIMIT 1`;existing=r[0]||null;}else{existing=dbRead().admin;}if(existing)return res.status(409).json({ok:false,message:'Admin sudah dibuat. Silakan login.'});const setupSecret=String(process.env.ADMIN_SETUP_SECRET||process.env.SESSION_SECRET||'');if(!setupSecret||String(req.body.setupSecret||'')!==setupSecret)return res.status(403).json({ok:false,message:'Setup secret tidak valid.'});const username=clean(req.body.username,32),password=String(req.body.password||'');if(!/^[a-zA-Z0-9._-]{3,32}$/.test(username))return res.status(400).json({ok:false,message:'Username 3-32 karakter.'});if(password.length<10)return res.status(400).json({ok:false,message:'Password minimal 10 karakter.'});const x={id:id(),username,password_hash:hash(password),session_version:1,created_at:now()};if(USE_POSTGRES){await ready();await sql`INSERT INTO admins(id,username,password_hash,session_version,created_at) VALUES(${x.id},${x.username},${x.password_hash},${x.session_version},${x.created_at})`;}else{const d=dbRead();if(d.admin)return res.status(409).json({ok:false,message:'Admin sudah dibuat.'});d.admin=x;dbWrite(d);}res.json({ok:true,message:'Admin berhasil dibuat.'});}catch(e){res.status(500).json({ok:false,message:e.message});}});
-app.post('/api/admin/login',loginRateLimit,sameOrigin,async(req,res)=>{try{const a=await adminByName(clean(req.body.username,32));if(!a||!verifyPassword(String(req.body.password||''),a.password_hash||a.password))return res.status(401).json({ok:false,message:'Username atau password salah.'});cookie(res,'efasa_admin',token(a.id,a.session_version||1),{httpOnly:true,sameSite:'Lax',maxAge:86400});csrf(req,res);res.json({ok:true});}catch(e){res.status(500).json({ok:false,message:e.message});}});
+app.post('/api/admin/setup',setupRateLimit,sameOrigin,async(req,res)=>{try{requirePersistence();let existing;if(USE_POSTGRES){await ready();const r=await sql`SELECT id FROM admins LIMIT 1`;existing=r[0]||null;}else{existing=dbRead().admin;}if(existing)return res.status(409).json({ok:false,message:'Admin sudah dibuat. Silakan login.'});const setupSecret=String(process.env.ADMIN_SETUP_SECRET||process.env.SESSION_SECRET||'');if(!setupSecret||String(req.body.setupSecret||'')!==setupSecret)return res.status(403).json({ok:false,message:'Setup secret tidak valid.'});const username=clean(req.body.username,32),password=String(req.body.password||'');if(!/^[a-zA-Z0-9._-]{3,32}$/.test(username))return res.status(400).json({ok:false,message:'Username 3-32 karakter.'});if(password.length<10)return res.status(400).json({ok:false,message:'Password minimal 10 karakter.'});const x={id:id(),username,password_hash:hash(password),session_version:1,created_at:now()};if(USE_POSTGRES){await ready();await sql`INSERT INTO admins(id,username,password_hash,session_version,created_at) VALUES(${x.id},${x.username},${x.password_hash},${x.session_version},${x.created_at})`;}else{const d=dbRead();if(d.admin)return res.status(409).json({ok:false,message:'Admin sudah dibuat.'});d.admin=x;dbWrite(d);}res.json({ok:true,message:'Admin berhasil dibuat.'});}catch(e){console.error('Admin setup:',e.message);res.status(500).json({ok:false,message:'Setup admin gagal.'});}});
+app.post('/api/admin/login',loginRateLimit,sameOrigin,async(req,res)=>{try{const a=await adminByName(clean(req.body.username,32));if(!a||!verifyPassword(String(req.body.password||''),a.password_hash||a.password))return res.status(401).json({ok:false,message:'Username atau password salah.'});cookie(res,'efasa_admin',token(a.id,a.session_version||1),{httpOnly:true,sameSite:'Lax',maxAge:86400});csrf(req,res);res.json({ok:true});}catch(e){console.error('Admin login:',e.message);res.status(500).json({ok:false,message:'Login admin gagal.'});}});
 app.post('/api/admin/password',auth,csrfGuard,adminMutationRateLimit,sameOrigin,async(req,res)=>{try{const password=String(req.body.password||''),confirm=String(req.body.confirmPassword||'');if(password.length<10)return res.status(400).json({ok:false,message:'Password baru minimal 10 karakter.'});if(password!==confirm)return res.status(400).json({ok:false,message:'Konfirmasi password tidak sama.'});const newHash=hash(password);let nextVersion=Number(req.admin?.session_version||1)+1;if(!USE_POSTGRES){const d=dbRead();if(!d.admin||d.admin.id!==req.adminId)return res.status(404).json({ok:false,message:'Admin tidak ditemukan.'});d.admin.password_hash=newHash;d.admin.session_version=nextVersion;dbWrite(d);}else{await ready();const r=await sql`UPDATE admins SET password_hash=${newHash},session_version=session_version+1 WHERE id=${req.adminId} RETURNING id,session_version`;if(!r[0])return res.status(404).json({ok:false,message:'Admin tidak ditemukan.'});nextVersion=Number(r[0].session_version||nextVersion);}cookie(res,'efasa_admin',token(req.adminId,nextVersion),{httpOnly:true,sameSite:'Lax',maxAge:86400});res.json({ok:true,message:'Password berhasil diubah. Session lama sudah dibatalkan.'});}catch(e){console.error('Admin password:',e.message);res.status(500).json({ok:false,message:'Password gagal diubah.'});}});
 app.post('/api/admin/logout',auth,sameOrigin,(req,res)=>{clear(res,'efasa_admin',true);clear(res,'efasa_csrf',false);res.json({ok:true});});
-app.put('/api/admin/settings',auth,csrfGuard,adminMutationRateLimit,sameOrigin,async(req,res)=>{try{const updates={};for(const k of Object.keys(DEFAULT_SETTINGS)){if(typeof req.body[k]==='string')updates[k]=clean(req.body[k],k==='heroText'?1200:500);}if(Object.prototype.hasOwnProperty.call(updates,'mapsLink')&&updates.mapsLink){try{const parsed=new URL(updates.mapsLink);if(parsed.protocol!=='https:')return res.status(400).json({ok:false,message:'Link Google Maps harus menggunakan HTTPS.'});updates.mapsLink=parsed.toString();}catch{return res.status(400).json({ok:false,message:'Link Google Maps tidak valid.'});}}if(!USE_POSTGRES){const d=dbRead();d.settings={...DEFAULT_SETTINGS,...(d.settings||{}),...updates};dbWrite(d);return res.json({ok:true,settings:d.settings});}await ready();for(const [k,v] of Object.entries(updates))await sql`INSERT INTO settings(key,value) VALUES(${k},${v}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;res.json({ok:true,settings:await settings()});}catch(e){res.status(500).json({ok:false,message:e.message});}});
+app.put('/api/admin/settings',auth,csrfGuard,adminMutationRateLimit,sameOrigin,async(req,res)=>{try{const updates={};for(const k of Object.keys(DEFAULT_SETTINGS)){if(typeof req.body[k]==='string')updates[k]=clean(req.body[k],k==='heroText'?1200:500);}if(Object.prototype.hasOwnProperty.call(updates,'mapsLink')&&updates.mapsLink){try{const parsed=new URL(updates.mapsLink);if(parsed.protocol!=='https:')return res.status(400).json({ok:false,message:'Link Google Maps harus menggunakan HTTPS.'});updates.mapsLink=parsed.toString();}catch{return res.status(400).json({ok:false,message:'Link Google Maps tidak valid.'});}}if(!USE_POSTGRES){const d=dbRead();d.settings={...DEFAULT_SETTINGS,...(d.settings||{}),...updates};dbWrite(d);return res.json({ok:true,settings:d.settings});}await ready();for(const [k,v] of Object.entries(updates))await sql`INSERT INTO settings(key,value) VALUES(${k},${v}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;res.json({ok:true,settings:await settings()});}catch(e){console.error('Admin settings:',e.message);res.status(500).json({ok:false,message:'Pengaturan gagal disimpan.'});}});
 
 
 function localMedia(req){
@@ -571,7 +571,7 @@ async function saveItem(type,req,res){
     console.error('Save media item:',e);
     return res.status(e.statusCode||500).json({
       ok:false,
-      message:e.message||'Gagal menyimpan media.'
+      message:'Gagal menyimpan media.'
     });
   }
 }
@@ -612,12 +612,12 @@ app.post('/api/admin/logo',auth,csrfGuard,adminMutationRateLimit,sameOrigin,logo
     }
     res.json({ok:true,logo:media});
   }catch(e){
-    console.error('Logo upload:',e);
-    res.status(500).json({ok:false,message:e.message||'Gagal menyimpan logo.'});
+    console.error('Logo upload:',e.message);
+    res.status(500).json({ok:false,message:'Gagal menyimpan logo.'});
   }
 });
 
-async function delItem(type,req,res){try{const x=await removeMedia(type,req.params.id);if(!x)return res.status(404).json({ok:false,message:'Data tidak ditemukan.'});await removeFile(x.media_url||x.media);res.json({ok:true});}catch(e){res.status(500).json({ok:false,message:e.message});}}
+async function delItem(type,req,res){try{const x=await removeMedia(type,req.params.id);if(!x)return res.status(404).json({ok:false,message:'Data tidak ditemukan.'});await removeFile(x.media_url||x.media);res.json({ok:true});}catch(e){console.error('Delete media:',e.message);res.status(500).json({ok:false,message:'Gagal menghapus data.'});}}
 app.delete('/api/admin/portfolio/:id',auth,csrfGuard,adminMutationRateLimit,sameOrigin,(req,res)=>delItem('portfolio',req,res));
 app.delete('/api/admin/stock/:id',auth,csrfGuard,adminMutationRateLimit,sameOrigin,(req,res)=>delItem('stock',req,res));
 app.get('/admin',(req,res)=>res.sendFile(path.join(PUBLIC,'admin','index.html')));
