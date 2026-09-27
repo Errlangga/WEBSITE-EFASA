@@ -206,6 +206,25 @@ app.use((req,res,next)=>{
 });
 app.use(express.json({limit:'300kb'}));
 app.use(express.urlencoded({extended:true,limit:'300kb'}));
+async function protectAdminPage(req,res,next){
+  const pathname=req.path.replace(/\\/g,'/');
+  if(pathname!=='/admin' && pathname!=='/admin/' && pathname!=='/admin/index.html')return next();
+  try{
+    requirePersistence();
+    const c=cookies(req.headers.cookie||'');
+    const sess=session(c.efasa_admin);
+    if(sess){
+      const a=await adminById(sess.sub);
+      if(a&&Number(a.session_version||1)===Number(sess.sv||1))return next();
+    }
+    const configured=Boolean(await adminByName('__any__'));
+    return res.redirect(configured?'/admin/login':'/admin/setup');
+  }catch(e){
+    console.error('Admin page guard:',e.message);
+    return res.redirect('/admin/login');
+  }
+}
+app.use(protectAdminPage);
 app.use(express.static(PUBLIC,{extensions:['html']}));
 
 app.get('/api/media',async(req,res)=>{
