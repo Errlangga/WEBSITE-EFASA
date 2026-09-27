@@ -295,13 +295,6 @@ async function loadSite() {
   document.getElementById('hours').textContent = s.hours || '08.00 - 17.00';
   document.getElementById('address').textContent = s.address || '';
 
-  var navLocationEl = document.getElementById('navLocation');
-  if (navLocationEl) {
-    navLocationEl.href = locationUrl || '#';
-    navLocationEl.classList.toggle('disabled-link', !locationUrl);
-    navLocationEl.setAttribute('aria-disabled', locationUrl ? 'false' : 'true');
-  }
-
   var wa = waUrl(s.whatsapp);
   ['navWhatsapp','heroWhatsapp','contactWhatsapp','floatingWhatsapp'].forEach(function(id) {
     var el = document.getElementById(id);
@@ -313,7 +306,6 @@ async function loadSite() {
   emailEl.href = email ? 'mailto:' + email : '#';
   emailEl.classList.toggle('disabled-link', !email);
 
-  var locationEl = document.getElementById('contactLocation');
   var mapsLink = String(s.mapsLink || '').trim();
   var locationUrl = '';
   if (mapsLink) {
@@ -322,9 +314,20 @@ async function loadSite() {
       if (locationParsed.protocol === 'https:') locationUrl = locationParsed.href;
     } catch (e) {}
   }
-  locationEl.href = locationUrl || '#';
-  locationEl.classList.toggle('disabled-link', !locationUrl);
-  locationEl.setAttribute('aria-disabled', locationUrl ? 'false' : 'true');
+
+  var navLocationEl = document.getElementById('navLocation');
+  if (navLocationEl) {
+    navLocationEl.href = locationUrl || '#';
+    navLocationEl.classList.toggle('disabled-link', !locationUrl);
+    navLocationEl.setAttribute('aria-disabled', locationUrl ? 'false' : 'true');
+  }
+
+  var locationEl = document.getElementById('contactLocation');
+  if (locationEl) {
+    locationEl.href = locationUrl || '#';
+    locationEl.classList.toggle('disabled-link', !locationUrl);
+    locationEl.setAttribute('aria-disabled', locationUrl ? 'false' : 'true');
+  }
 
   var logo = document.getElementById('siteLogo');
   var fallback = document.getElementById('logoFallback');
