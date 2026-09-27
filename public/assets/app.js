@@ -302,6 +302,7 @@ async function loadSite() {
   var wa = waUrl(s.whatsapp);
   ['navWhatsapp','heroWhatsapp','contactWhatsapp','floatingWhatsapp'].forEach(function(id) {
     var el = document.getElementById(id);
+    if (!el) return;
     el.href = wa;
     el.classList.toggle('disabled-link', wa === '#');
   });
