@@ -67,16 +67,70 @@ function now(){return new Date().toISOString();}
 function requirePersistence(){if(PERSISTENCE_MODE==='missing-database'){const e=new Error('Database production belum terhubung. Tambahkan/Hubungkan Neon Postgres di Vercel lalu redeploy project.');e.statusCode=503;throw e;}}
 function dbRead(){try{return JSON.parse(fs.readFileSync(DB_FILE,'utf8'));}catch{return {settings:{...DEFAULT_SETTINGS},admin:null,portfolio:[],stock:[]};}}
 function dbWrite(db){fs.writeFileSync(`${DB_FILE}.tmp`,JSON.stringify(db,null,2));fs.renameSync(`${DB_FILE}.tmp`,DB_FILE);}
-function secret(){return process.env.SESSION_SECRET || 'efasa-dev-secret-change-me-please';}
+const SESSION_SECRET=process.env.SESSION_SECRET || (!IS_VERCEL ? 'efasa-dev-secret-change-me-please' : '');
+function secret(){if(!SESSION_SECRET)throw new Error('SESSION_SECRET belum dikonfigurasi di production.');return SESSION_SECRET;}
 function hash(password,salt=crypto.randomBytes(16).toString('hex')){return `${salt}:${crypto.scryptSync(password,salt,64).toString('hex')}`;}
 function verifyPassword(password,stored){try{const [s,e]=String(stored||'').split(':');if(!s||!e)return false;const a=crypto.scryptSync(password,s,64).toString('hex');return a.length===e.length&&crypto.timingSafeEqual(Buffer.from(a),Buffer.from(e));}catch{return false;}}
-function token(adminId){const p=Buffer.from(JSON.stringify({sub:adminId,exp:Date.now()+86400000})).toString('base64url');return `${p}.${crypto.createHmac('sha256',secret()).update(p).digest('base64url')}`;}
+function token(adminId,sessionVersion=1){const p=Buffer.from(JSON.stringify({sub:adminId,sv:Number(sessionVersion)||1,exp:Date.now()+86400000})).toString('base64url');return `${p}.${crypto.createHmac('sha256',secret()).update(p).digest('base64url')}`;}
 function session(raw){try{const [p,s]=String(raw||'').split('.');const e=crypto.createHmac('sha256',secret()).update(p).digest('base64url');if(!s||s.length!==e.length||!crypto.timingSafeEqual(Buffer.from(s),Buffer.from(e)))return null;const x=JSON.parse(Buffer.from(p,'base64url'));return x.exp>Date.now()?x:null;}catch{return null;}}
 function cookies(header=''){return Object.fromEntries(header.split(';').map(x=>x.trim()).filter(Boolean).map(x=>{const i=x.indexOf('=');return [x.slice(0,i),decodeURIComponent(x.slice(i+1))];}));}
 function cookie(res,name,value,opts={}){const line=[`${name}=${encodeURIComponent(value)}`,`Path=${opts.path||'/'}`];if(opts.httpOnly)line.push('HttpOnly');if(opts.sameSite)line.push(`SameSite=${opts.sameSite}`);if(opts.maxAge!==undefined)line.push(`Max-Age=${opts.maxAge}`);if(process.env.NODE_ENV==='production'||process.env.VERCEL)line.push('Secure');const cur=res.getHeader('Set-Cookie');res.setHeader('Set-Cookie',[...(cur?Array.isArray(cur)?cur:[cur]:[]),line.join('; ')]);}
 function clear(res,n,httpOnly){cookie(res,n,'',{httpOnly,sameSite:'Lax',maxAge:0});}
+const rateBuckets=new Map();
+function requestIp(req){
+  const forwarded=String(req.headers['x-forwarded-for']||'').split(',')[0].trim();
+  return forwarded || req.socket?.remoteAddress || 'unknown';
+}
+function rateLimit({limit=10,windowMs=15*60*1000,keyFn=requestIp}={}){
+  return (req,res,next)=>{
+    const nowMs=Date.now();
+    const key=String(keyFn(req)||'unknown');
+    let bucket=rateBuckets.get(key);
+    if(!bucket || nowMs-bucket.startedAt>=windowMs){
+      bucket={startedAt:nowMs,count:0};
+      rateBuckets.set(key,bucket);
+    }
+    bucket.count+=1;
+    const remaining=Math.max(0,limit-bucket.count);
+    res.setHeader('X-RateLimit-Limit',String(limit));
+    res.setHeader('X-RateLimit-Remaining',String(remaining));
+    if(bucket.count>limit){
+      const retryAfter=Math.max(1,Math.ceil((bucket.startedAt+windowMs-nowMs)/1000));
+      res.setHeader('Retry-After',String(retryAfter));
+      return res.status(429).json({ok:false,message:'Terlalu banyak percobaan. Coba lagi beberapa saat.'});
+    }
+    if(rateBuckets.size>5000){
+      for(const [bucketKey,value] of rateBuckets){
+        if(nowMs-value.startedAt>=windowMs)rateBuckets.delete(bucketKey);
+      }
+    }
+    next();
+  };
+}
+const loginRateLimit=rateLimit({
+  limit:10,
+  windowMs:15*60*1000,
+  keyFn:req=>requestIp(req)+'|'+clean(req.body?.username,64).toLowerCase()
+});
+const setupRateLimit=rateLimit({limit:5,windowMs:15*60*1000});
+const adminMutationRateLimit=rateLimit({limit:60,windowMs:10*60*1000,keyFn:req=>requestIp(req)+'|admin'});
+function sameOrigin(req,res,next){
+  const origin=req.get('origin');
+  if(!origin)return next();
+  try{
+    const parsed=new URL(origin);
+    const host=req.get('host');
+    if(host && parsed.host!==host)return res.status(403).json({ok:false,message:'Origin tidak diizinkan.'});
+    if(req.secure===false && process.env.VERCEL && parsed.protocol!=='https:'){
+      return res.status(403).json({ok:false,message:'Origin tidak aman.'});
+    }
+  }catch{
+    return res.status(403).json({ok:false,message:'Origin tidak valid.'});
+  }
+  next();
+}
 function csrf(req,res){const c=cookies(req.headers.cookie||'');if(c.efasa_csrf)return c.efasa_csrf;const t=crypto.randomBytes(24).toString('hex');cookie(res,'efasa_csrf',t,{sameSite:'Lax',maxAge:86400});return t;}
-function auth(req,res,next){const s=session(cookies(req.headers.cookie||'').efasa_admin);if(!s)return res.status(401).json({ok:false,message:'Unauthorized'});req.adminId=s.sub;next();}
+async function auth(req,res,next){try{const s=session(cookies(req.headers.cookie||'').efasa_admin);if(!s)return res.status(401).json({ok:false,message:'Unauthorized'});const a=await adminById(s.sub);if(!a||Number(a.session_version||1)!==Number(s.sv||1))return res.status(401).json({ok:false,message:'Session admin sudah tidak berlaku. Silakan login kembali.'});req.adminId=s.sub;req.admin=a;next();}catch(e){console.error('Admin auth:',e.message);res.status(500).json({ok:false,message:'Autentikasi admin gagal.'});}}
 function csrfGuard(req,res,next){const c=cookies(req.headers.cookie||'');if(!c.efasa_csrf||c.efasa_csrf!==req.headers['x-efasa-csrf'])return res.status(403).json({ok:false,message:'CSRF token tidak valid. Muat ulang dashboard.'});next();}
 async function browserMediaUrl(url){
   const value=String(url||'');
@@ -107,10 +161,10 @@ async function browserMediaUrl(url){
   return '/api/media?path='+encodeURIComponent(pathname);
 }
 
-async function ready(){if(!USE_POSTGRES)return;if(!schemaReady){schemaReady=(async()=>{await sql`CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)`;await sql`CREATE TABLE IF NOT EXISTS admins(id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;await sql`CREATE TABLE IF NOT EXISTS media_items(id TEXT PRIMARY KEY,item_type TEXT NOT NULL CHECK(item_type IN ('portfolio','stock')),title TEXT,location TEXT,service TEXT,name TEXT,brand TEXT,capacity TEXT,price TEXT,description TEXT,media_url TEXT NOT NULL,media_type TEXT NOT NULL CHECK(media_type IN ('image','video')),created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;await sql`CREATE INDEX IF NOT EXISTS media_items_type_idx ON media_items(item_type,created_at DESC)`;for(const [k,v] of Object.entries(DEFAULT_SETTINGS))await sql`INSERT INTO settings(key,value) VALUES(${k},${v}) ON CONFLICT(key) DO NOTHING`;})().catch(e=>{schemaReady=null;throw e;});}await schemaReady;}
+async function ready(){if(!USE_POSTGRES)return;if(!schemaReady){schemaReady=(async()=>{await sql`CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)`;await sql`CREATE TABLE IF NOT EXISTS admins(id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;await sql`ALTER TABLE admins ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 1`;await sql`CREATE TABLE IF NOT EXISTS media_items(id TEXT PRIMARY KEY,item_type TEXT NOT NULL CHECK(item_type IN ('portfolio','stock')),title TEXT,location TEXT,service TEXT,name TEXT,brand TEXT,capacity TEXT,price TEXT,description TEXT,media_url TEXT NOT NULL,media_type TEXT NOT NULL CHECK(media_type IN ('image','video')),created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`;await sql`CREATE INDEX IF NOT EXISTS media_items_type_idx ON media_items(item_type,created_at DESC)`;for(const [k,v] of Object.entries(DEFAULT_SETTINGS))await sql`INSERT INTO settings(key,value) VALUES(${k},${v}) ON CONFLICT(key) DO NOTHING`;})().catch(e=>{schemaReady=null;throw e;});}await schemaReady;}
 async function settings(){requirePersistence();if(!USE_POSTGRES){const d=dbRead();d.settings={...DEFAULT_SETTINGS,...(d.settings||{})};dbWrite(d);return d.settings;}await ready();const r=await sql`SELECT key,value FROM settings`;return r.reduce((a,x)=>(a[x.key]=x.value,a),{...DEFAULT_SETTINGS});}
-async function adminById(idv){requirePersistence();if(!USE_POSTGRES)return dbRead().admin?.id===idv?dbRead().admin:null;await ready();const r=await sql`SELECT id,username,password_hash,created_at FROM admins WHERE id=${idv} LIMIT 1`;return r[0]||null;}
-async function adminByName(name){requirePersistence();if(!USE_POSTGRES){const a=dbRead().admin;return a&&a.username===name?a:null;}await ready();if(name==='__any__'){const r=await sql`SELECT id,username,password_hash,created_at FROM admins LIMIT 1`;return r[0]||null;}const r=await sql`SELECT id,username,password_hash,created_at FROM admins WHERE username=${name} LIMIT 1`;return r[0]||null;}
+async function adminById(idv){requirePersistence();if(!USE_POSTGRES){const a=dbRead().admin;if(a&&a.id===idv){a.session_version=Number(a.session_version||1);return a;}return null;}await ready();const r=await sql`SELECT id,username,password_hash,created_at,session_version FROM admins WHERE id=${idv} LIMIT 1`;return r[0]||null;}
+async function adminByName(name){requirePersistence();if(!USE_POSTGRES){const a=dbRead().admin;return a&&a.username===name?a:null;}await ready();if(name==='__any__'){const r=await sql`SELECT id,username,password_hash,created_at,session_version FROM admins LIMIT 1`;return r[0]||null;}const r=await sql`SELECT id,username,password_hash,created_at,session_version FROM admins WHERE username=${name} LIMIT 1`;return r[0]||null;}
 async function allMedia(type){requirePersistence();if(!USE_POSTGRES){const d=dbRead();return (type==='portfolio'?d.portfolio:d.stock)||[];}await ready();const r=await sql`SELECT id,item_type,title,location,service,name,brand,capacity,price,description,media_url,media_type,created_at FROM media_items WHERE item_type=${type} ORDER BY created_at DESC`;return r.map(x=>({id:x.id,title:x.title||'',location:x.location||'',service:x.service||'',name:x.name||'',brand:x.brand||'',capacity:x.capacity||'',price:x.price||'',description:x.description||'',media:x.media_url,mediaType:x.media_type,createdAt:x.created_at}));}
 async function insertMedia(x){requirePersistence();if(!USE_POSTGRES){const d=dbRead();(x.itemType==='portfolio'?d.portfolio:d.stock).unshift(x);dbWrite(d);return;}await ready();await sql`INSERT INTO media_items(id,item_type,title,location,service,name,brand,capacity,price,description,media_url,media_type,created_at) VALUES(${x.id},${x.itemType},${x.title||null},${x.location||null},${x.service||null},${x.name||null},${x.brand||null},${x.capacity||null},${x.price||null},${x.description||null},${x.media},${x.mediaType},${x.createdAt})`;}
 async function removeMedia(type,itemId){requirePersistence();if(!USE_POSTGRES){const d=dbRead(),a=type==='portfolio'?d.portfolio:d.stock,i=a.findIndex(x=>x.id===itemId);if(i<0)return null;const [x]=a.splice(i,1);dbWrite(d);return x;}await ready();const r=await sql`DELETE FROM media_items WHERE id=${itemId} AND item_type=${type} RETURNING media_url`;return r[0]||null;}
@@ -138,6 +192,17 @@ async function removeFile(url){
   }
 }
 
+app.use((req,res,next)=>{
+  res.setHeader('X-Content-Type-Options','nosniff');
+  res.setHeader('X-Frame-Options','SAMEORIGIN');
+  res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy','camera=(),microphone=(),geolocation=(),payment=()');
+  res.setHeader('Cross-Origin-Opener-Policy','same-origin');
+  res.setHeader('X-Permitted-Cross-Domain-Policies','none');
+  res.setHeader('Strict-Transport-Security','max-age=31536000; includeSubDomains');
+  res.setHeader('Content-Security-Policy',"default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'");
+  next();
+});
 app.use(express.json({limit:'300kb'}));
 app.use(express.urlencoded({extended:true,limit:'300kb'}));
 app.use(express.static(PUBLIC,{extensions:['html']}));
@@ -182,7 +247,7 @@ app.get('/api/media',async(req,res)=>{
   }
 });;
 
-app.get('/api/health',async(_req,res)=>{const hasDatabaseUrl=Boolean(process.env.DATABASE_URL);try{await settings();res.json({ok:true,database:'postgres',storage:STORAGE_MODE,node:process.version,hasDatabaseUrl});}catch(e){res.status(e.statusCode||500).json({ok:false,database:PERSISTENCE_MODE,storage:STORAGE_MODE,node:process.version,hasDatabaseUrl,message:e.message});}});
+app.get('/api/health',async(_req,res)=>{try{await settings();res.json({ok:true});}catch(e){res.status(503).json({ok:false,message:'Service unavailable.'});}});
 app.get('/api/public',async(_req,res)=>{try{
   res.setHeader('Cache-Control','no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma','no-cache');
@@ -193,7 +258,7 @@ app.get('/api/public',async(_req,res)=>{try{
   const stock=await allMedia('stock');
   const media=[...portfolio,...stock];
   for(const item of media)item.media=await browserMediaUrl(item.media);
-  res.status(200).json({ok:true,settings:siteSettings,portfolio,stock,storageMode:STORAGE_MODE});
+  res.status(200).json({ok:true,settings:siteSettings,portfolio,stock});
 }catch(e){res.status(e.statusCode||500).json({ok:false,message:e.message||'Data website gagal dimuat.',database:PERSISTENCE_MODE});}});
 async function buildDatabaseBackup(){
   requirePersistence();
@@ -415,11 +480,11 @@ app.get('/api/admin/backup/full',auth,async(_req,res)=>{
     if(!res.headersSent)return res.status(e.statusCode||500).json({ok:false,message:e.message||'Full backup gagal.'});
   }
 });
-app.post('/api/admin/setup',async(req,res)=>{try{requirePersistence();let existing;if(USE_POSTGRES){await ready();const r=await sql`SELECT id FROM admins LIMIT 1`;existing=r[0]||null;}else{existing=dbRead().admin;}if(existing)return res.status(409).json({ok:false,message:'Admin sudah dibuat. Silakan login.'});const username=clean(req.body.username,32),password=String(req.body.password||'');if(!/^[a-zA-Z0-9._-]{3,32}$/.test(username))return res.status(400).json({ok:false,message:'Username 3-32 karakter.'});if(password.length<10)return res.status(400).json({ok:false,message:'Password minimal 10 karakter.'});const x={id:id(),username,password_hash:hash(password),created_at:now()};if(USE_POSTGRES){await ready();await sql`INSERT INTO admins(id,username,password_hash,created_at) VALUES(${x.id},${x.username},${x.password_hash},${x.created_at})`;}else{const d=dbRead();if(d.admin)return res.status(409).json({ok:false,message:'Admin sudah dibuat.'});d.admin=x;dbWrite(d);}res.json({ok:true,message:'Admin berhasil dibuat.'});}catch(e){res.status(500).json({ok:false,message:e.message});}});
-app.post('/api/admin/login',async(req,res)=>{try{const a=await adminByName(clean(req.body.username,32));if(!a||!verifyPassword(String(req.body.password||''),a.password_hash||a.password))return res.status(401).json({ok:false,message:'Username atau password salah.'});cookie(res,'efasa_admin',token(a.id),{httpOnly:true,sameSite:'Lax',maxAge:86400});csrf(req,res);res.json({ok:true});}catch(e){res.status(500).json({ok:false,message:e.message});}});
-app.post('/api/admin/password',auth,csrfGuard,async(req,res)=>{try{const password=String(req.body.password||''),confirm=String(req.body.confirmPassword||'');if(password.length<10)return res.status(400).json({ok:false,message:'Password baru minimal 10 karakter.'});if(password!==confirm)return res.status(400).json({ok:false,message:'Konfirmasi password tidak sama.'});const newHash=hash(password);if(!USE_POSTGRES){const d=dbRead();if(!d.admin||d.admin.id!==req.adminId)return res.status(404).json({ok:false,message:'Admin tidak ditemukan.'});d.admin.password_hash=newHash;dbWrite(d);}else{await ready();const r=await sql`UPDATE admins SET password_hash=${newHash} WHERE id=${req.adminId} RETURNING id`;if(!r[0])return res.status(404).json({ok:false,message:'Admin tidak ditemukan.'});}cookie(res,'efasa_admin',token(req.adminId),{httpOnly:true,sameSite:'Lax',maxAge:86400});res.json({ok:true,message:'Password berhasil diubah.'});}catch(e){res.status(500).json({ok:false,message:e.message});}});
-app.post('/api/admin/logout',auth,(req,res)=>{clear(res,'efasa_admin',true);clear(res,'efasa_csrf',false);res.json({ok:true});});
-app.put('/api/admin/settings',auth,csrfGuard,async(req,res)=>{try{const updates={};for(const k of Object.keys(DEFAULT_SETTINGS)){if(typeof req.body[k]==='string')updates[k]=clean(req.body[k],k==='heroText'?1200:500);}if(Object.prototype.hasOwnProperty.call(updates,'mapsLink')&&updates.mapsLink){try{const parsed=new URL(updates.mapsLink);if(parsed.protocol!=='https:')return res.status(400).json({ok:false,message:'Link Google Maps harus menggunakan HTTPS.'});updates.mapsLink=parsed.toString();}catch{return res.status(400).json({ok:false,message:'Link Google Maps tidak valid.'});}}if(!USE_POSTGRES){const d=dbRead();d.settings={...DEFAULT_SETTINGS,...(d.settings||{}),...updates};dbWrite(d);return res.json({ok:true,settings:d.settings});}await ready();for(const [k,v] of Object.entries(updates))await sql`INSERT INTO settings(key,value) VALUES(${k},${v}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;res.json({ok:true,settings:await settings()});}catch(e){res.status(500).json({ok:false,message:e.message});}});
+app.post('/api/admin/setup',setupRateLimit,sameOrigin,async(req,res)=>{try{requirePersistence();let existing;if(USE_POSTGRES){await ready();const r=await sql`SELECT id FROM admins LIMIT 1`;existing=r[0]||null;}else{existing=dbRead().admin;}if(existing)return res.status(409).json({ok:false,message:'Admin sudah dibuat. Silakan login.'});const setupSecret=String(process.env.ADMIN_SETUP_SECRET||process.env.SESSION_SECRET||'');if(!setupSecret||String(req.body.setupSecret||'')!==setupSecret)return res.status(403).json({ok:false,message:'Setup secret tidak valid.'});const username=clean(req.body.username,32),password=String(req.body.password||'');if(!/^[a-zA-Z0-9._-]{3,32}$/.test(username))return res.status(400).json({ok:false,message:'Username 3-32 karakter.'});if(password.length<10)return res.status(400).json({ok:false,message:'Password minimal 10 karakter.'});const x={id:id(),username,password_hash:hash(password),session_version:1,created_at:now()};if(USE_POSTGRES){await ready();await sql`INSERT INTO admins(id,username,password_hash,session_version,created_at) VALUES(${x.id},${x.username},${x.password_hash},${x.session_version},${x.created_at})`;}else{const d=dbRead();if(d.admin)return res.status(409).json({ok:false,message:'Admin sudah dibuat.'});d.admin=x;dbWrite(d);}res.json({ok:true,message:'Admin berhasil dibuat.'});}catch(e){res.status(500).json({ok:false,message:e.message});}});
+app.post('/api/admin/login',loginRateLimit,sameOrigin,async(req,res)=>{try{const a=await adminByName(clean(req.body.username,32));if(!a||!verifyPassword(String(req.body.password||''),a.password_hash||a.password))return res.status(401).json({ok:false,message:'Username atau password salah.'});cookie(res,'efasa_admin',token(a.id,a.session_version||1),{httpOnly:true,sameSite:'Lax',maxAge:86400});csrf(req,res);res.json({ok:true});}catch(e){res.status(500).json({ok:false,message:e.message});}});
+app.post('/api/admin/password',auth,csrfGuard,adminMutationRateLimit,sameOrigin,async(req,res)=>{try{const password=String(req.body.password||''),confirm=String(req.body.confirmPassword||'');if(password.length<10)return res.status(400).json({ok:false,message:'Password baru minimal 10 karakter.'});if(password!==confirm)return res.status(400).json({ok:false,message:'Konfirmasi password tidak sama.'});const newHash=hash(password);let nextVersion=Number(req.admin?.session_version||1)+1;if(!USE_POSTGRES){const d=dbRead();if(!d.admin||d.admin.id!==req.adminId)return res.status(404).json({ok:false,message:'Admin tidak ditemukan.'});d.admin.password_hash=newHash;d.admin.session_version=nextVersion;dbWrite(d);}else{await ready();const r=await sql`UPDATE admins SET password_hash=${newHash},session_version=session_version+1 WHERE id=${req.adminId} RETURNING id,session_version`;if(!r[0])return res.status(404).json({ok:false,message:'Admin tidak ditemukan.'});nextVersion=Number(r[0].session_version||nextVersion);}cookie(res,'efasa_admin',token(req.adminId,nextVersion),{httpOnly:true,sameSite:'Lax',maxAge:86400});res.json({ok:true,message:'Password berhasil diubah. Session lama sudah dibatalkan.'});}catch(e){console.error('Admin password:',e.message);res.status(500).json({ok:false,message:'Password gagal diubah.'});}});
+app.post('/api/admin/logout',auth,sameOrigin,(req,res)=>{clear(res,'efasa_admin',true);clear(res,'efasa_csrf',false);res.json({ok:true});});
+app.put('/api/admin/settings',auth,csrfGuard,adminMutationRateLimit,sameOrigin,async(req,res)=>{try{const updates={};for(const k of Object.keys(DEFAULT_SETTINGS)){if(typeof req.body[k]==='string')updates[k]=clean(req.body[k],k==='heroText'?1200:500);}if(Object.prototype.hasOwnProperty.call(updates,'mapsLink')&&updates.mapsLink){try{const parsed=new URL(updates.mapsLink);if(parsed.protocol!=='https:')return res.status(400).json({ok:false,message:'Link Google Maps harus menggunakan HTTPS.'});updates.mapsLink=parsed.toString();}catch{return res.status(400).json({ok:false,message:'Link Google Maps tidak valid.'});}}if(!USE_POSTGRES){const d=dbRead();d.settings={...DEFAULT_SETTINGS,...(d.settings||{}),...updates};dbWrite(d);return res.json({ok:true,settings:d.settings});}await ready();for(const [k,v] of Object.entries(updates))await sql`INSERT INTO settings(key,value) VALUES(${k},${v}) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`;res.json({ok:true,settings:await settings()});}catch(e){res.status(500).json({ok:false,message:e.message});}});
 
 
 function localMedia(req){
@@ -510,9 +575,9 @@ async function saveItem(type,req,res){
     });
   }
 }
-app.post('/api/admin/portfolio',auth,csrfGuard,mediaUploadSingle,(req,res)=>saveItem('portfolio',req,res));
-app.post('/api/admin/stock',auth,csrfGuard,mediaUploadSingle,(req,res)=>saveItem('stock',req,res));
-app.post('/api/admin/logo',auth,csrfGuard,logoUpload.single('media'),async(req,res)=>{
+app.post('/api/admin/portfolio',auth,csrfGuard,adminMutationRateLimit,sameOrigin,mediaUploadSingle,(req,res)=>saveItem('portfolio',req,res));
+app.post('/api/admin/stock',auth,csrfGuard,adminMutationRateLimit,sameOrigin,mediaUploadSingle,(req,res)=>saveItem('stock',req,res));
+app.post('/api/admin/logo',auth,csrfGuard,adminMutationRateLimit,sameOrigin,logoUpload.single('media'),async(req,res)=>{
   try{
     if(!req.file)return res.status(400).json({ok:false,message:'File logo wajib dipilih.'});
     let media='';
@@ -553,8 +618,8 @@ app.post('/api/admin/logo',auth,csrfGuard,logoUpload.single('media'),async(req,r
 });
 
 async function delItem(type,req,res){try{const x=await removeMedia(type,req.params.id);if(!x)return res.status(404).json({ok:false,message:'Data tidak ditemukan.'});await removeFile(x.media_url||x.media);res.json({ok:true});}catch(e){res.status(500).json({ok:false,message:e.message});}}
-app.delete('/api/admin/portfolio/:id',auth,csrfGuard,(req,res)=>delItem('portfolio',req,res));
-app.delete('/api/admin/stock/:id',auth,csrfGuard,(req,res)=>delItem('stock',req,res));
+app.delete('/api/admin/portfolio/:id',auth,csrfGuard,adminMutationRateLimit,sameOrigin,(req,res)=>delItem('portfolio',req,res));
+app.delete('/api/admin/stock/:id',auth,csrfGuard,adminMutationRateLimit,sameOrigin,(req,res)=>delItem('stock',req,res));
 app.get('/admin',(req,res)=>res.sendFile(path.join(PUBLIC,'admin','index.html')));
 app.get('/admin/setup',(req,res)=>res.sendFile(path.join(PUBLIC,'setup.html')));
 app.get('/admin/login',(req,res)=>res.sendFile(path.join(PUBLIC,'login.html')));
