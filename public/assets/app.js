@@ -295,6 +295,13 @@ async function loadSite() {
   document.getElementById('hours').textContent = s.hours || '08.00 - 17.00';
   document.getElementById('address').textContent = s.address || '';
 
+  var navLocationEl = document.getElementById('navLocation');
+  if (navLocationEl) {
+    navLocationEl.href = locationUrl || '#';
+    navLocationEl.classList.toggle('disabled-link', !locationUrl);
+    navLocationEl.setAttribute('aria-disabled', locationUrl ? 'false' : 'true');
+  }
+
   var wa = waUrl(s.whatsapp);
   ['navWhatsapp','heroWhatsapp','contactWhatsapp','floatingWhatsapp'].forEach(function(id) {
     var el = document.getElementById(id);
