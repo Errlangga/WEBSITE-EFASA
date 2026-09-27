@@ -193,7 +193,61 @@ app.get('/api/public',async(_req,res)=>{try{
   for(const item of media)item.media=await browserMediaUrl(item.media);
   res.status(200).json({ok:true,settings:siteSettings,portfolio,stock,storageMode:STORAGE_MODE});
 }catch(e){res.status(e.statusCode||500).json({ok:false,message:e.message||'Data website gagal dimuat.',database:PERSISTENCE_MODE});}});
+async function buildDatabaseBackup(){
+  requirePersistence();
+
+  if(!USE_POSTGRES){
+    const d=dbRead();
+    return {
+      formatVersion:1,
+      app:'EFASA TEKNIK',
+      backupType:'database-data',
+      createdAt:now(),
+      storage:{database:'local-json',media:STORAGE_MODE},
+      settings:{...DEFAULT_SETTINGS,...(d.settings||{})},
+      admin:d.admin ? {id:d.admin.id||'',username:d.admin.username||'',created_at:d.admin.created_at||''} : null,
+      portfolio:Array.isArray(d.portfolio)?d.portfolio:[],
+      stock:Array.isArray(d.stock)?d.stock:[]
+    };
+  }
+
+  await ready();
+  const settingRows=await sql`SELECT key,value FROM settings ORDER BY key`;
+  const adminRows=await sql`SELECT id,username,created_at FROM admins ORDER BY created_at ASC`;
+  const mediaRows=await sql`SELECT id,item_type,title,location,service,name,brand,capacity,price,description,media_url,media_type,created_at FROM media_items ORDER BY created_at ASC`;
+  const savedSettings=settingRows.reduce((out,row)=>{out[row.key]=row.value;return out;},{});
+  const media=mediaRows.map(row=>({
+    id:row.id,itemType:row.item_type,title:row.title||'',location:row.location||'',service:row.service||'',
+    name:row.name||'',brand:row.brand||'',capacity:row.capacity||'',price:row.price||'',description:row.description||'',
+    media:row.media_url,mediaType:row.media_type,createdAt:row.created_at
+  }));
+  return {
+    formatVersion:1,
+    app:'EFASA TEKNIK',
+    backupType:'database-data',
+    createdAt:now(),
+    storage:{database:'postgres',media:STORAGE_MODE},
+    settings:{...DEFAULT_SETTINGS,...savedSettings},
+    admin:adminRows[0] ? {id:adminRows[0].id,username:adminRows[0].username,created_at:adminRows[0].created_at} : null,
+    portfolio:media.filter(item=>item.itemType==='portfolio'),
+    stock:media.filter(item=>item.itemType==='stock')
+  };
+}
 app.get('/api/admin/status',async(req,res)=>{try{requirePersistence();const c=cookies(req.headers.cookie||''),s=session(c.efasa_admin);let a=null;if(USE_POSTGRES){if(s)a=await adminById(s.sub);}else{a=dbRead().admin;}const loggedIn=Boolean(a&&s&&a.id===s.sub);const configured=Boolean(await adminByName('__any__'));res.json({ok:true,configured,loggedIn,storageMode:STORAGE_MODE,csrfToken:loggedIn?csrf(req,res):(c.efasa_csrf||'')});}catch(e){res.status(500).json({ok:false,message:e.message});}});
+app.get('/api/admin/backup',auth,async(_req,res)=>{
+  try{
+    const backup=await buildDatabaseBackup();
+    const stamp=new Date().toISOString().replace(/[:.]/g,'-');
+    const filename=`efasa-database-backup-${stamp}.json`;
+    res.setHeader('Content-Type','application/json; charset=utf-8');
+    res.setHeader('Content-Disposition',`attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control','private, no-store, max-age=0');
+    res.status(200).send(JSON.stringify(backup,null,2));
+  }catch(e){
+    console.error('Database backup:',e);
+    res.status(e.statusCode||500).json({ok:false,message:e.message||'Backup database gagal.'});
+  }
+});
 app.post('/api/admin/setup',async(req,res)=>{try{requirePersistence();let existing;if(USE_POSTGRES){await ready();const r=await sql`SELECT id FROM admins LIMIT 1`;existing=r[0]||null;}else{existing=dbRead().admin;}if(existing)return res.status(409).json({ok:false,message:'Admin sudah dibuat. Silakan login.'});const username=clean(req.body.username,32),password=String(req.body.password||'');if(!/^[a-zA-Z0-9._-]{3,32}$/.test(username))return res.status(400).json({ok:false,message:'Username 3-32 karakter.'});if(password.length<10)return res.status(400).json({ok:false,message:'Password minimal 10 karakter.'});const x={id:id(),username,password_hash:hash(password),created_at:now()};if(USE_POSTGRES){await ready();await sql`INSERT INTO admins(id,username,password_hash,created_at) VALUES(${x.id},${x.username},${x.password_hash},${x.created_at})`;}else{const d=dbRead();if(d.admin)return res.status(409).json({ok:false,message:'Admin sudah dibuat.'});d.admin=x;dbWrite(d);}res.json({ok:true,message:'Admin berhasil dibuat.'});}catch(e){res.status(500).json({ok:false,message:e.message});}});
 app.post('/api/admin/login',async(req,res)=>{try{const a=await adminByName(clean(req.body.username,32));if(!a||!verifyPassword(String(req.body.password||''),a.password_hash||a.password))return res.status(401).json({ok:false,message:'Username atau password salah.'});cookie(res,'efasa_admin',token(a.id),{httpOnly:true,sameSite:'Lax',maxAge:86400});csrf(req,res);res.json({ok:true});}catch(e){res.status(500).json({ok:false,message:e.message});}});
 app.post('/api/admin/password',auth,csrfGuard,async(req,res)=>{try{const password=String(req.body.password||''),confirm=String(req.body.confirmPassword||'');if(password.length<10)return res.status(400).json({ok:false,message:'Password baru minimal 10 karakter.'});if(password!==confirm)return res.status(400).json({ok:false,message:'Konfirmasi password tidak sama.'});const newHash=hash(password);if(!USE_POSTGRES){const d=dbRead();if(!d.admin||d.admin.id!==req.adminId)return res.status(404).json({ok:false,message:'Admin tidak ditemukan.'});d.admin.password_hash=newHash;dbWrite(d);}else{await ready();const r=await sql`UPDATE admins SET password_hash=${newHash} WHERE id=${req.adminId} RETURNING id`;if(!r[0])return res.status(404).json({ok:false,message:'Admin tidak ditemukan.'});}cookie(res,'efasa_admin',token(req.adminId),{httpOnly:true,sameSite:'Lax',maxAge:86400});res.json({ok:true,message:'Password berhasil diubah.'});}catch(e){res.status(500).json({ok:false,message:e.message});}});
