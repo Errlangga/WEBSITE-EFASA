@@ -564,11 +564,12 @@ body:after{
 .contact-orbit{
   position:fixed;
   right:20px;
-  bottom:20px;
+  top:50%;
   z-index:90;
   width:74px;
   height:74px;
   isolation:isolate;
+  transform:translateY(-50%);
 }
 .contact-orbit__backdrop{
   position:absolute;
@@ -716,25 +717,25 @@ body:after{
 }
 .contact-orbit.is-open .contact-orbit__item--phone{
   opacity:1;
-  transform:translate3d(0,-82px,0) scale(1) rotate(0);
+  transform:translate3d(-84px,0,0) scale(1) rotate(0);
   transition-delay:.03s;
 }
 .contact-orbit.is-open .contact-orbit__item--whatsapp{
   opacity:1;
-  transform:translate3d(0,-152px,0) scale(1) rotate(0);
+  transform:translate3d(-152px,0,0) scale(1) rotate(0);
   transition-delay:.11s;
 }
 .contact-orbit.is-open .contact-orbit__item:active{
   transform:scale(.92);
 }
 @media(max-width:760px){
-  .contact-orbit{right:14px;bottom:14px}
+  .contact-orbit{right:10px;top:52%}
   .contact-orbit__label{display:none}
   .contact-orbit__toggle{width:62px;height:62px}
   .contact-orbit{width:62px;height:62px}
   .contact-orbit__item{width:54px;height:54px;border-radius:18px;right:4px;bottom:4px}
-  .contact-orbit.is-open .contact-orbit__item--phone{transform:translate3d(0,-72px,0) scale(1) rotate(0)}
-  .contact-orbit.is-open .contact-orbit__item--whatsapp{transform:translate3d(0,-134px,0) scale(1) rotate(0)}
+  .contact-orbit.is-open .contact-orbit__item--phone{transform:translate3d(-72px,0,0) scale(1) rotate(0)}
+  .contact-orbit.is-open .contact-orbit__item--whatsapp{transform:translate3d(-134px,0,0) scale(1) rotate(0)}
   .contact-orbit__pulse{inset:7px}
 }
 @media(prefers-reduced-motion:reduce){
